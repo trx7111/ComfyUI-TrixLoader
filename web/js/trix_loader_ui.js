@@ -415,9 +415,6 @@ const wrapNodeGetExtraMenuOptions = (nodeType) => {
     nodeType.prototype.getExtraMenuOptions = function(canvas, options) {
         if (origGetExtraMenuOptions) {
             origGetExtraMenuOptions.apply(this, arguments);
-        } else {
-            const baseGet = LiteGraph.LGraphNode.prototype.getExtraMenuOptions;
-            if (baseGet) baseGet.apply(this, arguments);
         }
         
         // Skip for TrixLoadImageAIO because it has its own custom menu logic

@@ -78,7 +78,7 @@ function curveHasAdjustments(curveState) {
 
 function buildCurveLut(points) {
     const pts = normalizeCurvePoints(points);
-    const lut = new Uint8Array(256);
+    const lut = new Float32Array(256);
     const n = pts.length;
     
     if (n === 2) {
@@ -86,7 +86,7 @@ function buildCurveLut(points) {
         for (let x = 0; x <= 255; x++) {
             const t = x / 255;
             const y = pts[0].y + (pts[1].y - pts[0].y) * t;
-            lut[x] = Math.max(0, Math.min(255, Math.round(y)));
+            lut[x] = Math.max(0, Math.min(255, y));
         }
         return lut;
     }
@@ -144,12 +144,14 @@ function buildCurveLut(points) {
         }
         const diff = x - xs[i];
         const y = ys[i] + c1s[i] * diff + c2s[i] * diff * diff + c3s[i] * diff * diff * diff;
-        lut[x] = Math.max(0, Math.min(255, Math.round(y)));
+        lut[x] = Math.max(0, Math.min(255, y));
     }
     return lut;
 }
 
 function applyLightnessLikePhotoshop(lightness, delta) {
+    // Simple and reliable: just shift L in HSL space with soft-clipping
+    // Matches Photoshop's Hue/Sat lightness behavior closely enough
     const d = Math.max(-1, Math.min(1, delta));
     if (d >= 0) return Math.max(0, Math.min(1, lightness + (1 - lightness) * d));
     return Math.max(0, Math.min(1, lightness + lightness * d));
@@ -174,6 +176,24 @@ function rgbToHsl(r, g, b) {
         h /= 6;
     }
     return [h * 360, s, Math.max(0, Math.min(1, l))];
+}
+
+function rgbToHslFloat(r, g, b) {
+    let max = Math.max(r, g, b), min = Math.min(r, g, b);
+    let h, s, l = (max + min) / 2;
+    if (max === min) { h = s = 0; } 
+    else {
+        let d = max - min;
+        s = l > 0.5 ? d / Math.max(0.00001, 2 - max - min) : d / Math.max(0.00001, max + min);
+        s = Math.max(0, Math.min(1, s));
+        switch (max) {
+            case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+            case g: h = (b - r) / d + 2; break;
+            case b: h = (r - g) / d + 4; break;
+        }
+        h /= 6;
+    }
+    return [h * 360, s, l];
 }
 
 function hslToRgb(h, s, l) {
@@ -204,6 +224,594 @@ function hslToRgb(h, s, l) {
     ];
 }
 
+// ============================================================
+// NEW FILTER ALGORITHMS (ported from ComfyUI_Channel_Ops)
+// ============================================================
+
+// --- Blur Primitives (Float32 plane-based) ---
+// --- Downsample/Upsample Helpers for Fast Blur ---
+function crDownsamplePlane(s, w, h, dw, dh, ds) {
+    const out = new Float32Array(dw * dh);
+    for (let y = 0; y < dh; y++) {
+        const sy = Math.min(h - 1, Math.round(y * ds));
+        const sRow = sy * w;
+        const dRow = y * dw;
+        for (let x = 0; x < dw; x++) {
+            const sx = Math.min(w - 1, Math.round(x * ds));
+            out[dRow + x] = s[sRow + sx];
+        }
+    }
+    return out;
+}
+
+function crUpsamplePlane(s, dw, dh, o, w, h, ds) {
+    for (let y = 0; y < h; y++) {
+        const sy = y / ds;
+        const y0 = Math.floor(sy);
+        const y1 = Math.min(dh - 1, y0 + 1);
+        const wy = sy - y0;
+        const dRow = y * w;
+        const r0 = y0 * dw;
+        const r1 = y1 * dw;
+
+        for (let x = 0; x < w; x++) {
+            const sx = x / ds;
+            const x0 = Math.floor(sx);
+            const x1 = Math.min(dw - 1, x0 + 1);
+            const wx = sx - x0;
+
+            const p00 = s[r0 + x0];
+            const p10 = s[r0 + x1];
+            const p01 = s[r1 + x0];
+            const p11 = s[r1 + x1];
+
+            const top = p00 + wx * (p10 - p00);
+            const bottom = p01 + wx * (p11 - p01);
+            o[dRow + x] = top + wy * (bottom - top);
+        }
+    }
+}
+
+// --- Blur Primitives (Float32 plane-based) ---
+function crBoxBlurPlane(s, tmp, o, w, h, radius) {
+    if (radius <= 0) { o.set(s); return; }
+    const r = radius | 0;
+    const k = 2 * r + 1;
+    const invK = 1.0 / k;
+
+    // Horizontal sliding-window pass
+    for (let yy = 0; yy < h; yy++) {
+        const row = yy * w;
+        let sum = 0;
+        for (let dx = -r; dx <= r; dx++) {
+            const sx = dx < 0 ? 0 : (dx >= w ? w - 1 : dx);
+            sum += s[row + sx];
+        }
+        tmp[row] = sum * invK;
+        for (let xx = 1; xx < w; xx++) {
+            const ax = (xx + r) >= w ? w - 1 : (xx + r);
+            const rx = (xx - r - 1) < 0 ? 0 : (xx - r - 1);
+            sum += s[row + ax] - s[row + rx];
+            tmp[row + xx] = sum * invK;
+        }
+    }
+
+    // Vertical cache-friendly sliding-window pass
+    const sumLine = new Float32Array(w);
+    for (let dy = -r; dy <= r; dy++) {
+        const sy = dy < 0 ? 0 : (dy >= h ? h - 1 : dy);
+        const srcRow = sy * w;
+        for (let xx = 0; xx < w; xx++) {
+            sumLine[xx] += tmp[srcRow + xx];
+        }
+    }
+    for (let xx = 0; xx < w; xx++) {
+        o[xx] = sumLine[xx] * invK;
+    }
+    for (let yy = 1; yy < h; yy++) {
+        const destRow = yy * w;
+        const ay = (yy + r) >= h ? h - 1 : (yy + r);
+        const ry = (yy - r - 1) < 0 ? 0 : (yy - r - 1);
+        const addRow = ay * w;
+        const subRow = ry * w;
+        for (let xx = 0; xx < w; xx++) {
+            sumLine[xx] += tmp[addRow + xx] - tmp[subRow + xx];
+            o[destRow + xx] = sumLine[xx] * invK;
+        }
+    }
+}
+
+function crBresenhamCircleOffsets(r) {
+    if (r <= 0) return [[0, 0]];
+    const seen = new Set();
+    const out = [];
+    let x = 0, y = r | 0, d = 1 - (r | 0);
+    while (x <= y) {
+        const pts = [[x, y], [-x, y], [x, -y], [-x, -y], [y, x], [-y, x], [y, -x], [-y, -x]];
+        for (const p of pts) {
+            const k = p[0] + ',' + p[1];
+            if (!seen.has(k)) { seen.add(k); out.push(p); }
+        }
+        x++;
+        if (d < 0) d += 2 * x + 1;
+        else { y--; d += 2 * (x - y) + 1; }
+    }
+    return out;
+}
+
+function crAverageEdgeBlurPlaneRaw(s, o, w, h, radius) {
+    const offs = crBresenhamCircleOffsets(radius | 0);
+    const n = offs.length;
+    const invN = 1.0 / n;
+    
+    o.fill(0);
+    for (let i = 0; i < n; i++) {
+        const dx = offs[i][0];
+        const dy = offs[i][1];
+        for (let yy = 0; yy < h; yy++) {
+            let sy = yy + dy;
+            if (sy < 0) sy = 0; else if (sy >= h) sy = h - 1;
+            const srcRow = sy * w;
+            const destRow = yy * w;
+            for (let xx = 0; xx < w; xx++) {
+                let sx = xx + dx;
+                if (sx < 0) sx = 0; else if (sx >= w) sx = w - 1;
+                o[destRow + xx] += s[srcRow + sx];
+            }
+        }
+    }
+    const N = w * h;
+    for (let i = 0; i < N; i++) {
+        o[i] *= invN;
+    }
+}
+
+function crAverageEdgeBlurPlane(s, o, w, h, radius) {
+    if (radius <= 0) { o.set(s); return; }
+    const ds = radius > 12 ? 4 : (radius > 4 ? 2 : 1);
+    if (ds > 1) {
+        const dw = Math.ceil(w / ds);
+        const dh = Math.ceil(h / ds);
+        const ds_radius = radius / ds;
+        const down_s = crDownsamplePlane(s, w, h, dw, dh, ds);
+        const down_o = new Float32Array(dw * dh);
+        crAverageEdgeBlurPlaneRaw(down_s, down_o, dw, dh, ds_radius);
+        crUpsamplePlane(down_o, dw, dh, o, w, h, ds);
+    } else {
+        crAverageEdgeBlurPlaneRaw(s, o, w, h, radius);
+    }
+}
+
+function crGaussianBlurPlaneRaw(s, tmp, o, w, h, radiusParam) {
+    const sigma = Math.max(0.5, radiusParam / 3.0);
+    const kr = Math.max(1, Math.round(3 * sigma));
+    const kArr = new Float32Array(2 * kr + 1);
+    let ksum = 0;
+    for (let i = -kr; i <= kr; i++) {
+        const v = Math.exp(-(i * i) / (2 * sigma * sigma));
+        kArr[i + kr] = v; ksum += v;
+    }
+    for (let i = 0; i < kArr.length; i++) kArr[i] /= ksum;
+
+    // Horizontal pass (optimized cache-friendly)
+    for (let yy = 0; yy < h; yy++) {
+        const row = yy * w;
+        for (let xx = 0; xx < w; xx++) {
+            let acc = 0;
+            for (let i = -kr; i <= kr; i++) {
+                let sx = xx + i;
+                if (sx < 0) sx = 0; else if (sx >= w) sx = w - 1;
+                acc += s[row + sx] * kArr[i + kr];
+            }
+            tmp[row + xx] = acc;
+        }
+    }
+
+    // Vertical pass (optimized cache-friendly 1D accumulation)
+    o.fill(0);
+    for (let i = -kr; i <= kr; i++) {
+        const weight = kArr[i + kr];
+        for (let yy = 0; yy < h; yy++) {
+            let sy = yy + i;
+            if (sy < 0) sy = 0; else if (sy >= h) sy = h - 1;
+            const srcRow = sy * w;
+            const destRow = yy * w;
+            for (let xx = 0; xx < w; xx++) {
+                o[destRow + xx] += tmp[srcRow + xx] * weight;
+            }
+        }
+    }
+}
+
+function crGaussianBlurPlane(s, tmp, o, w, h, radiusParam) {
+    if (radiusParam <= 0) { o.set(s); return; }
+    const ds = radiusParam > 12 ? 4 : (radiusParam > 4 ? 2 : 1);
+    if (ds > 1) {
+        const dw = Math.ceil(w / ds);
+        const dh = Math.ceil(h / ds);
+        const ds_radius = radiusParam / ds;
+        const down_s = crDownsamplePlane(s, w, h, dw, dh, ds);
+        const down_tmp = new Float32Array(dw * dh);
+        const down_o = new Float32Array(dw * dh);
+        crGaussianBlurPlaneRaw(down_s, down_tmp, down_o, dw, dh, ds_radius);
+        crUpsamplePlane(down_o, dw, dh, o, w, h, ds);
+    } else {
+        crGaussianBlurPlaneRaw(s, tmp, o, w, h, radiusParam);
+    }
+}
+
+function crApplyBlurFilter(targetCtx, w, h, mode, radius) {
+    if (radius <= 0) return;
+    const m = (mode || 'gaussian').toLowerCase();
+    if (m.includes('surface')) {
+        const r = Math.max(1, Math.min(8, Math.round(radius / 6.0)));
+        const d = r * 2 + 1;
+        applyBilateralFilter(targetCtx, w, h, d, (radius / 50.0) * 90.0 + 10.0, d * 2.0);
+        return;
+    }
+    const imgData = targetCtx.getImageData(0, 0, w, h);
+    const src = imgData.data;
+    const N = w * h;
+    const sR = new Float32Array(N), sG = new Float32Array(N), sB = new Float32Array(N);
+    const oR = new Float32Array(N), oG = new Float32Array(N), oB = new Float32Array(N);
+    const tmp = new Float32Array(N);
+    for (let i = 0; i < N; i++) {
+        sR[i] = src[i * 4] / 255;
+        sG[i] = src[i * 4 + 1] / 255;
+        sB[i] = src[i * 4 + 2] / 255;
+    }
+    if (m === 'average') {
+        crBoxBlurPlane(sR, tmp, oR, w, h, radius);
+        crBoxBlurPlane(sG, tmp, oG, w, h, radius);
+        crBoxBlurPlane(sB, tmp, oB, w, h, radius);
+    } else if (m === 'edge average') {
+        crAverageEdgeBlurPlane(sR, oR, w, h, radius);
+        crAverageEdgeBlurPlane(sG, oG, w, h, radius);
+        crAverageEdgeBlurPlane(sB, oB, w, h, radius);
+    } else {
+        crGaussianBlurPlane(sR, tmp, oR, w, h, radius);
+        crGaussianBlurPlane(sG, tmp, oG, w, h, radius);
+        crGaussianBlurPlane(sB, tmp, oB, w, h, radius);
+    }
+    for (let i = 0; i < N; i++) {
+        src[i * 4] = Math.max(0, Math.min(255, Math.round(oR[i] * 255)));
+        src[i * 4 + 1] = Math.max(0, Math.min(255, Math.round(oG[i] * 255)));
+        src[i * 4 + 2] = Math.max(0, Math.min(255, Math.round(oB[i] * 255)));
+    }
+    targetCtx.putImageData(imgData, 0, 0);
+}
+
+
+// --- Halftone ---
+const CR_BAYER_8 = [
+    [0, 32, 8, 40, 2, 34, 10, 42], [48, 16, 56, 24, 50, 18, 58, 26],
+    [12, 44, 4, 36, 14, 46, 6, 38], [60, 28, 52, 20, 62, 30, 54, 22],
+    [3, 35, 11, 43, 1, 33, 9, 41], [51, 19, 59, 27, 49, 17, 57, 25],
+    [15, 47, 7, 39, 13, 45, 5, 37], [63, 31, 55, 23, 61, 29, 53, 21],
+];
+
+function crApplyHalftone(targetCtx, w, h, params) {
+    const imgData = targetCtx.getImageData(0, 0, w, h);
+    const src = imgData.data;
+    const N = w * h;
+    const sR = new Float32Array(N), sG = new Float32Array(N), sB = new Float32Array(N);
+    for (let i = 0; i < N; i++) { sR[i] = src[i * 4] / 255; sG[i] = src[i * 4 + 1] / 255; sB[i] = src[i * 4 + 2] / 255; }
+    const oR = new Float32Array(N), oG = new Float32Array(N), oB = new Float32Array(N);
+    const tmpP = new Float32Array(N);
+
+    const shape = String(params.shape || 'Dot').toLowerCase();
+    const inverse = !!params.inverse;
+    const sz = Math.max(1, params.size | 0);
+    const angleRad = (params.angle || 0) * Math.PI / 180;
+    const cosA = Math.cos(angleRad), sinA = Math.sin(angleRad);
+    const dStrength = Math.max(0, Math.min(100, params.dither | 0)) / 100;
+    const bayerCell = Math.max(1, (sz / 5) | 0);
+    const cxImg = (w - 1) / 2, cyImg = (h - 1) / 2;
+    const bOff = (params.brightness || 0) / 100.0;
+    const cFac = ((params.contrast || 0) + 100.0) / 100.0;
+    const invSz = 1 / sz;
+
+    for (let p = 0; p < N; p++) {
+        let r = (sR[p] - 0.5) * cFac + 0.5 + bOff;
+        let g = (sG[p] - 0.5) * cFac + 0.5 + bOff;
+        let b = (sB[p] - 0.5) * cFac + 0.5 + bOff;
+        if (r < 0) r = 0; else if (r > 1) r = 1;
+        if (g < 0) g = 0; else if (g > 1) g = 1;
+        if (b < 0) b = 0; else if (b > 1) b = 1;
+        tmpP[p] = 0.299 * r + 0.587 * g + 0.114 * b;
+    }
+
+    for (let y = 0; y < h; y++) {
+        const ys = y - cyImg;
+        for (let x = 0; x < w; x++) {
+            const xs = x - cxImg;
+            const rx = (xs * cosA + ys * sinA) * invSz;
+            const ry = (-xs * sinA + ys * cosA) * invSz;
+            const lx = rx - Math.floor(rx) - 0.5;
+            const ly = ry - Math.floor(ry) - 0.5;
+            let d, screen;
+            switch (shape) {
+                case 'square dot': d = 2 * Math.max(Math.abs(lx), Math.abs(ly)); screen = 1 - Math.min(1, Math.max(0, d)); break;
+                case 'line': case 'line centered': screen = 1 - Math.min(1, Math.max(0, 2 * Math.abs(ly))); break;
+                case 'rhomboid': case 'spot diamond': d = 2 * (Math.abs(lx) + Math.abs(ly)); screen = 1 - Math.min(1, Math.max(0, d)); break;
+                case 'cross cut': d = 2 * Math.min(Math.abs(lx), Math.abs(ly)); screen = 1 - Math.min(1, Math.max(0, d)); break;
+                case 'saddle': d = 4 * Math.abs(lx * ly); screen = 1 - Math.min(1, Math.max(0, d)); break;
+                case 'random dots': {
+                    const cxCell = Math.floor(rx), cyCell = Math.floor(ry);
+                    const seed = (Math.abs((cxCell | 0) * 73856093 + (cyCell | 0) * 19349663)) >>> 0;
+                    const dxJit = ((seed % 1000) / 1000 - 0.5) * 0.6;
+                    const dyJit = ((Math.floor(seed / 1000) % 1000) / 1000 - 0.5) * 0.6;
+                    d = Math.sqrt((lx - dxJit) ** 2 + (ly - dyJit) ** 2) / 0.7071;
+                    screen = 1 - Math.min(1, Math.max(0, d)); break;
+                }
+                default: d = Math.sqrt(lx * lx + ly * ly) / 0.7071; screen = 1 - Math.min(1, Math.max(0, d));
+            }
+            const p = y * w + x;
+            let effLum = tmpP[p];
+            if (dStrength > 0) {
+                const by = ((y / bayerCell) | 0) & 7;
+                const bx = ((x / bayerCell) | 0) & 7;
+                effLum += (CR_BAYER_8[by][bx] / 64 - 0.5) * dStrength;
+            }
+            let result;
+            if (dStrength > 0) { result = effLum > screen ? 1 : 0; }
+            else { result = Math.min(1, Math.max(0, (effLum - screen) * 4 + 0.5)); }
+            if (inverse) result = 1 - result;
+            oR[p] = result; oG[p] = result; oB[p] = result;
+        }
+    }
+    for (let i = 0; i < N; i++) {
+        src[i * 4] = Math.max(0, Math.min(255, Math.round(oR[i] * 255)));
+        src[i * 4 + 1] = Math.max(0, Math.min(255, Math.round(oG[i] * 255)));
+        src[i * 4 + 2] = Math.max(0, Math.min(255, Math.round(oB[i] * 255)));
+    }
+    targetCtx.putImageData(imgData, 0, 0);
+}
+
+// --- Color Balance Wheel Math ---
+function cbShiftsToPos(r, g, b) {
+    const tr = 0.5 + r / 200;
+    const tg = 0.5 + g / 200;
+    const tb = 0.5 + b / 200;
+    const cr = Math.max(0, Math.min(1, tr));
+    const cg = Math.max(0, Math.min(1, tg));
+    const cb_ = Math.max(0, Math.min(1, tb));
+    const mx = Math.max(cr, cg, cb_);
+    const mn = Math.min(cr, cg, cb_);
+    const d = mx - mn;
+    let hue = 0;
+    if (d > 1e-8) {
+        if (mx === cr) hue = (((cg - cb_) / d) / 6) % 1;
+        else if (mx === cg) hue = ((2 + (cb_ - cr) / d) / 6) % 1;
+        else hue = ((4 + (cr - cg) / d) / 6) % 1;
+        if (hue < 0) hue += 1;
+    }
+    const s = mx > 0 ? d / mx : 0;
+    return { hue: hue, distance: s * mx };
+}
+
+let cbDiscCanvas = null;
+function getCbDiscCanvas() {
+    if (cbDiscCanvas) return cbDiscCanvas;
+    const sz = 76;
+    const c = document.createElement('canvas');
+    c.width = sz; c.height = sz;
+    const cx = c.getContext('2d');
+    const img = cx.createImageData(sz, sz);
+    const cc = sz / 2, rmax = sz / 2 - 1;
+    for (let y = 0; y < sz; y++) {
+        for (let x = 0; x < sz; x++) {
+            const dx = x - cc, dy = y - cc;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            const idx = (y * sz + x) * 4;
+            if (dist > rmax) { img.data[idx + 3] = 0; continue; }
+            const ang = Math.atan2(dx, -dy);
+            let hue = ((ang * 180 / Math.PI) + 360) % 360;
+            const s = Math.min(1, dist / rmax);
+            const h6 = hue / 60, ii = Math.floor(h6), f = h6 - ii;
+            const p = 1 - s, q = 1 - s * f, t = 1 - s * (1 - f);
+            let r, g, b;
+            switch (((ii % 6) + 6) % 6) {
+                case 0: r = 1; g = t; b = p; break; case 1: r = q; g = 1; b = p; break;
+                case 2: r = p; g = 1; b = t; break; case 3: r = p; g = q; b = 1; break;
+                case 4: r = t; g = p; b = 1; break; default: r = 1; g = p; b = q;
+            }
+            img.data[idx] = (r * 255) | 0; img.data[idx + 1] = (g * 255) | 0;
+            img.data[idx + 2] = (b * 255) | 0; img.data[idx + 3] = 255;
+        }
+    }
+    cx.putImageData(img, 0, 0);
+    cbDiscCanvas = c;
+    return c;
+}
+
+// --- Posterize Error Diffusion ---
+function crApplyPosterizeErrorDiffuse(targetCtx, w, h, levels, mode, kind) {
+    const imgData = targetCtx.getImageData(0, 0, w, h);
+    const src = imgData.data;
+    const N = w * h;
+    const sR = new Float32Array(N), sG = new Float32Array(N), sB = new Float32Array(N);
+    for (let i = 0; i < N; i++) {
+        sR[i] = src[i * 4] / 255;
+        sG[i] = src[i * 4 + 1] / 255;
+        sB[i] = src[i * 4 + 2] / 255;
+    }
+    const step = levels - 1;
+    const m = (mode || 'RGB').toLowerCase();
+    if (m === 'luminance') {
+        const luma = new Float32Array(N);
+        for (let i = 0; i < N; i++) {
+            luma[i] = sR[i] * 0.299 + sG[i] * 0.587 + sB[i] * 0.114;
+        }
+        crErrorDiffusePlane(luma, w, h, step, kind);
+        for (let i = 0; i < N; i++) {
+            const oldL = sR[i] * 0.299 + sG[i] * 0.587 + sB[i] * 0.114;
+            const ratio = oldL > 1e-4 ? luma[i] / (oldL + 1e-8) : 1;
+            src[i * 4] = Math.max(0, Math.min(255, Math.round(sR[i] * ratio * 255)));
+            src[i * 4 + 1] = Math.max(0, Math.min(255, Math.round(sG[i] * ratio * 255)));
+            src[i * 4 + 2] = Math.max(0, Math.min(255, Math.round(sB[i] * ratio * 255)));
+        }
+    } else {
+        crErrorDiffusePlane(sR, w, h, step, kind);
+        crErrorDiffusePlane(sG, w, h, step, kind);
+        crErrorDiffusePlane(sB, w, h, step, kind);
+        for (let i = 0; i < N; i++) {
+            src[i * 4] = Math.max(0, Math.min(255, Math.round(sR[i] * 255)));
+            src[i * 4 + 1] = Math.max(0, Math.min(255, Math.round(sG[i] * 255)));
+            src[i * 4 + 2] = Math.max(0, Math.min(255, Math.round(sB[i] * 255)));
+        }
+    }
+    targetCtx.putImageData(imgData, 0, 0);
+}
+
+// --- Color Filter Wheel ---
+let _crColorWheelCanvas = null;
+function getCRColorWheelCanvas() {
+    if (_crColorWheelCanvas) return _crColorWheelCanvas;
+    const sz = 150;
+    const c = document.createElement('canvas');
+    c.width = sz; c.height = sz;
+    const cx = c.getContext('2d');
+    const img = cx.createImageData(sz, sz);
+    const cc = sz / 2, rmax = sz / 2 - 1;
+    for (let y = 0; y < sz; y++) {
+        for (let x = 0; x < sz; x++) {
+            const dx = x - cc, dy = y - cc;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            const idx = (y * sz + x) * 4;
+            if (dist > rmax) { img.data[idx + 3] = 0; continue; }
+            const ang = Math.atan2(dx, -dy);
+            let hue = ((ang * 180 / Math.PI) + 360) % 360;
+            const s = Math.min(1, dist / rmax);
+            const h6 = hue / 60, ii = Math.floor(h6), f = h6 - ii;
+            const p = 1 - s, q = 1 - s * f, t = 1 - s * (1 - f);
+            let r, g, b;
+            switch (((ii % 6) + 6) % 6) {
+                case 0: r = 1; g = t; b = p; break; case 1: r = q; g = 1; b = p; break;
+                case 2: r = p; g = 1; b = t; break; case 3: r = p; g = q; b = 1; break;
+                case 4: r = t; g = p; b = 1; break; default: r = 1; g = p; b = q;
+            }
+            img.data[idx] = (r * 255) | 0; img.data[idx + 1] = (g * 255) | 0;
+            img.data[idx + 2] = (b * 255) | 0; img.data[idx + 3] = 255;
+        }
+    }
+    cx.putImageData(img, 0, 0);
+    _crColorWheelCanvas = c;
+    return c;
+}
+
+// --- Sharpen (Unsharp Mask) ---
+function crApplySharpenUSM(targetCtx, w, h, amount, radius, threshold) {
+    if (amount <= 0) return;
+    const imgData = targetCtx.getImageData(0, 0, w, h);
+    const src = imgData.data;
+    const N = w * h;
+    const sR = new Float32Array(N), sG = new Float32Array(N), sB = new Float32Array(N);
+    for (let i = 0; i < N; i++) { sR[i] = src[i * 4] / 255; sG[i] = src[i * 4 + 1] / 255; sB[i] = src[i * 4 + 2] / 255; }
+    const blurR = new Float32Array(N), blurG = new Float32Array(N), blurB = new Float32Array(N);
+    const tmp = new Float32Array(N);
+    crGaussianBlurPlane(sR, tmp, blurR, w, h, radius);
+    crGaussianBlurPlane(sG, tmp, blurG, w, h, radius);
+    crGaussianBlurPlane(sB, tmp, blurB, w, h, radius);
+    const thr = threshold / 255;
+    const amt = amount / 100;
+    for (let i = 0; i < N; i++) {
+        let dr = sR[i] - blurR[i], dg = sG[i] - blurG[i], db = sB[i] - blurB[i];
+        if (thr > 0) {
+            if (Math.abs(dr) <= thr) dr = 0;
+            if (Math.abs(dg) <= thr) dg = 0;
+            if (Math.abs(db) <= thr) db = 0;
+        }
+        let r = sR[i] + dr * amt, g = sG[i] + dg * amt, b = sB[i] + db * amt;
+        src[i * 4] = Math.max(0, Math.min(255, Math.round(r * 255)));
+        src[i * 4 + 1] = Math.max(0, Math.min(255, Math.round(g * 255)));
+        src[i * 4 + 2] = Math.max(0, Math.min(255, Math.round(b * 255)));
+    }
+    targetCtx.putImageData(imgData, 0, 0);
+}
+
+// --- Laplacian Sharpen ---
+function crApplyLaplacianSharpen(targetCtx, w, h, amount, kernel) {
+    if (amount <= 0) return;
+    const imgData = targetCtx.getImageData(0, 0, w, h);
+    const src = imgData.data;
+    const N = w * h;
+    const sR = new Float32Array(N), sG = new Float32Array(N), sB = new Float32Array(N);
+    for (let i = 0; i < N; i++) { sR[i] = src[i * 4] / 255; sG[i] = src[i * 4 + 1] / 255; sB[i] = src[i * 4 + 2] / 255; }
+    const use8 = String(kernel || '').indexOf('4') < 0;
+    function plane(s, o) {
+        for (let y = 0; y < h; y++) {
+            const ym = y > 0 ? y - 1 : 0, yp = y < h - 1 ? y + 1 : h - 1;
+            for (let x = 0; x < w; x++) {
+                const xm = x > 0 ? x - 1 : 0, xp = x < w - 1 ? x + 1 : w - 1;
+                const c = s[y * w + x];
+                let lap;
+                if (use8) {
+                    lap = s[ym * w + xm] + s[ym * w + x] + s[ym * w + xp]
+                        + s[y * w + xm] + s[y * w + xp]
+                        + s[yp * w + xm] + s[yp * w + x] + s[yp * w + xp] - 8 * c;
+                } else { lap = s[ym * w + x] + s[y * w + xm] + s[y * w + xp] + s[yp * w + x] - 4 * c; }
+                let v = c - amount * lap;
+                o[y * w + x] = v < 0 ? 0 : (v > 1 ? 1 : v);
+            }
+        }
+    }
+    const oR = new Float32Array(N), oG = new Float32Array(N), oB = new Float32Array(N);
+    plane(sR, oR); plane(sG, oG); plane(sB, oB);
+    for (let i = 0; i < N; i++) {
+        src[i * 4] = Math.max(0, Math.min(255, Math.round(oR[i] * 255)));
+        src[i * 4 + 1] = Math.max(0, Math.min(255, Math.round(oG[i] * 255)));
+        src[i * 4 + 2] = Math.max(0, Math.min(255, Math.round(oB[i] * 255)));
+    }
+    targetCtx.putImageData(imgData, 0, 0);
+}
+
+// --- Posterize ---
+function crErrorDiffusePlane(arr, w, h, step, kind) {
+    if (kind === 'floyd-steinberg') {
+        for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+                const i = y * w + x;
+                const old = arr[i], ne = Math.round(old * step) / step, err = old - ne;
+                arr[i] = ne;
+                if (x + 1 < w) arr[i + 1] += err * (7 / 16);
+                if (y + 1 < h) {
+                    if (x > 0) arr[i + w - 1] += err * (3 / 16);
+                    arr[i + w] += err * (5 / 16);
+                    if (x + 1 < w) arr[i + w + 1] += err * (1 / 16);
+                }
+            }
+        }
+    } else { // atkinson
+        for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+                const i = y * w + x;
+                const old = arr[i], ne = Math.round(old * step) / step, err = (old - ne) / 8;
+                arr[i] = ne;
+                if (x + 1 < w) arr[i + 1] += err;
+                if (x + 2 < w) arr[i + 2] += err;
+                if (y + 1 < h) {
+                    if (x > 0) arr[i + w - 1] += err;
+                    arr[i + w] += err;
+                    if (x + 1 < w) arr[i + w + 1] += err;
+                }
+                if (y + 2 < h) arr[i + 2 * w] += err;
+            }
+        }
+    }
+    for (let i = 0; i < arr.length; i++) { if (arr[i] < 0) arr[i] = 0; else if (arr[i] > 1) arr[i] = 1; }
+}
+
+// --- Levels (per-pixel, applied inside processPixels) ---
+// Integrated directly into processPixels via parameters
+
+// --- Color Balance (per-pixel, applied inside processPixels) ---
+// Integrated directly into processPixels via parameters
+
+// ============================================================
+// END NEW FILTER ALGORITHMS
+// ============================================================
+
 function getCRTooltipText() {
     return `◩ Trix Camera Raw — Professional Color Grading
 Professional RAW image editor.
@@ -214,6 +822,7 @@ Key Features:
 ✦ HSL Sliders — Adjust hue, saturation, and luminance for 8 individual color channels.
 ✦ Curves — Precise contrast and color curves mapping for R, G, B, and RGB channels.
 ✦ Effects — Halftone, Pixel Art (with K-Means and Dithering), and Sketch (pencil drawing effect).
+✦ Advanced Filters — Levels, Color Balance, Color Filter (HSV Wheel), Advanced Vignette, Blur (Gaussian/Average/Edge/Surface), Sharpen (USM & Laplacian), Posterize (with Atkinson/Floyd-Steinberg dithering).
 
 Shortcuts & Tips:
 ⌨ [F] in HSL / Curves mode — Activates the pipette. Click and drag up/down on the image to adjust parameters for the color under the cursor.
@@ -300,16 +909,28 @@ function ensureTooltipStyles() {
 }
 
 export function openTrixCameraRawEditor(node) {
+    const imgElement = node.imgTagRef;
+    const savedMaskCanvas = null;
     try {
         const abortCtrl = new AbortController();
-        if (!node.imgTagRef || !node.imgTagRef.naturalWidth) {
+        if (!imgElement || !imgElement.naturalWidth) {
             alert("Please load an image first!");
             return;
         }
 
+        let drawCfWheel, drawHtDial, drawCbWheels, drawLevelsBar;
+
     const origImgObj = new Image();
     origImgObj.crossOrigin = "Anonymous";
-    origImgObj.src = node.imgTagRef.src;
+    let opaqueSrc = imgElement.src;
+    if (opaqueSrc && !opaqueSrc.startsWith("data:") && !opaqueSrc.startsWith("blob:")) {
+        try {
+            const url = new URL(opaqueSrc, window.location.origin);
+            url.searchParams.set("channel", "rgb");
+            opaqueSrc = url.toString();
+        } catch(e) {}
+    }
+    origImgObj.src = opaqueSrc;
 
     const TRIX_AIO_SUBFOLDER = "aio_input";
     const getCleanOrigBaseName = (src) => {
@@ -333,7 +954,7 @@ export function openTrixCameraRawEditor(node) {
     const trixCropFilename = (nodeId, version) => {
         const uWgt = node.widgets ? node.widgets.find(w => w.name === "trix_uuid") : null;
         const idToUse = uWgt && uWgt.value ? uWgt.value : nodeId;
-        const origBase = getCleanOrigBaseName(node.imgTagRef.src);
+        const origBase = getCleanOrigBaseName(imgElement.src);
         return `${origBase}_edited_${idToUse}_${version}.png`;
     };
 
@@ -383,7 +1004,91 @@ export function openTrixCameraRawEditor(node) {
         cr_pixel_dot_size: getV('cr_pixel_dot_size'),
         cr_pixel_outline: getV('cr_pixel_outline'),
         cr_pixel_smoothing: getV('cr_pixel_smoothing'),
-        cr_pixel_algo: getSV('cr_pixel_algo', 'kmeans')
+        cr_pixel_algo: getSV('cr_pixel_algo', 'kmeans'),
+        // Blur Advanced
+        cr_blur_radius: getV('cr_blur_radius'),
+        cr_blur_mode: getSV('cr_blur_mode', 'gaussian'),
+        // Halftone
+        cr_ht_size: getV('cr_ht_size') || 0,
+        cr_ht_angle: getW('cr_ht_angle') !== null ? getV('cr_ht_angle') : 15,
+        cr_ht_contrast: getV('cr_ht_contrast'),
+        cr_ht_brightness: getV('cr_ht_brightness'),
+        cr_ht_dither: getW('cr_ht_dither') !== null ? getV('cr_ht_dither') : 100,
+        cr_ht_inverse: !!getV('cr_ht_inverse'),
+        cr_ht_shape: getSV('cr_ht_shape', 'Dot'),
+        // Sharpen USM
+        cr_usm_amount: getV('cr_usm_amount'),
+        cr_usm_radius: getW('cr_usm_radius') !== null ? (getV('cr_usm_radius') || 2) : 2,
+        cr_usm_threshold: getV('cr_usm_threshold'),
+        // Laplacian
+        cr_lap_amount: getFV('cr_lap_amount', 0),
+        cr_lap_kernel: getSV('cr_lap_kernel', '8-neighbor'),
+        // Color Filter
+        cr_cf_hue: getV('cr_cf_hue'),
+        cr_cf_density: getV('cr_cf_density'),
+        cr_cf_preserve: getW('cr_cf_preserve') !== null ? getV('cr_cf_preserve') : 50,
+        // Posterize
+        cr_post_enable: false,
+        cr_post_levels: getW('cr_post_levels') !== null ? getV('cr_post_levels') : 4,
+        cr_post_mode: getSV('cr_post_mode', 'RGB'),
+        cr_post_dither_mode: getSV('cr_post_dither_mode', 'None'),
+        cr_post_dither: getV('cr_post_dither'),
+        // Levels
+        cr_lvl_channel: getSV('cr_lvl_channel', 'rgb'),
+        cr_lvl_in_black: getV('cr_lvl_in_black'),
+        cr_lvl_in_white: (() => { const w = getW('cr_lvl_in_white'); if (!w) return 255; const v = parseInt(w.value); return (isNaN(v) || v <= 0) ? 255 : v; })(),
+        cr_lvl_gamma: getFV('cr_lvl_gamma', 1.0),
+        cr_lvl_out_black: getV('cr_lvl_out_black'),
+        cr_lvl_out_white: (() => { const w = getW('cr_lvl_out_white'); if (!w) return 255; const v = parseInt(w.value); return (isNaN(v) || v <= 0) ? 255 : v; })(),
+        // Color Balance
+        cr_cb_shad_r: getV('cr_cb_shad_r'), cr_cb_shad_g: getV('cr_cb_shad_g'), cr_cb_shad_b: getV('cr_cb_shad_b'),
+        cr_cb_mid_r: getV('cr_cb_mid_r'), cr_cb_mid_g: getV('cr_cb_mid_g'), cr_cb_mid_b: getV('cr_cb_mid_b'),
+        cr_cb_high_r: getV('cr_cb_high_r'), cr_cb_high_g: getV('cr_cb_high_g'), cr_cb_high_b: getV('cr_cb_high_b')
+    };
+
+    const defaultCrState = {
+        cr_offset: 0, cr_exp: 0, cr_cont: 0, cr_high: 0, cr_shad: 0, cr_white: 0, cr_black: 0,
+        cr_temp: 0, cr_tint: 0, cr_vibrance: 0, cr_colorfulness: 0, cr_sat: 0,
+        cr_tex: 0, cr_clar: 0, cr_dehz: 0, cr_sharp: 0, cr_denoise: 0,
+        cr_blur: 0, cr_surface_blur: 0, cr_grain: 0, cr_vignette: 0,
+        cr_sketch_kernel_size: 0, cr_sketch_sigma: 1.4, cr_sketch_k_sigma: 1.6, cr_sketch_epsilon: -0.03, cr_sketch_phi: 10.0, cr_sketch_gamma: 1.0, cr_sketch_color: 'gray',
+        cr_pixel_colors: 128, cr_pixel_dot_size: 0, cr_pixel_outline: 0, cr_pixel_smoothing: 0, cr_pixel_algo: 'kmeans',
+        cr_blur_radius: 0, cr_blur_mode: 'gaussian',
+        cr_ht_size: 0, cr_ht_angle: 15, cr_ht_contrast: 0, cr_ht_brightness: 0, cr_ht_dither: 100, cr_ht_inverse: false, cr_ht_shape: 'Dot',
+        cr_usm_amount: 0, cr_usm_radius: 1, cr_usm_threshold: 0,
+        cr_lap_amount: 0, cr_lap_kernel: '8-neighbor',
+        cr_cf_hue: 0, cr_cf_density: 0, cr_cf_preserve: 50,
+        cr_post_enable: false, cr_post_levels: 4, cr_post_mode: 'RGB', cr_post_dither_mode: 'None', cr_post_dither: 0,
+        cr_lvl_channel: 'rgb', cr_lvl_in_black: 0, cr_lvl_in_white: 255, cr_lvl_gamma: 1.0, cr_lvl_out_black: 0, cr_lvl_out_white: 255,
+        cr_cb_shad_r: 0, cr_cb_shad_g: 0, cr_cb_shad_b: 0,
+        cr_cb_mid_r: 0, cr_cb_mid_g: 0, cr_cb_mid_b: 0,
+        cr_cb_high_r: 0, cr_cb_high_g: 0, cr_cb_high_b: 0
+    };
+
+    for (const key in defaultCrState) {
+        const val = state[key];
+        if (val === undefined || val === null || (typeof val === 'number' && isNaN(val))) {
+            state[key] = defaultCrState[key];
+        }
+    }
+
+    const defaultHslState = {
+        colorize: false,
+        activeChannel: 'master',
+        master:   { h: 0, s: 0, l: 0 },
+        reds:     { h: 0, s: 0, l: 0, center: 0, width: 60 },
+        yellows:  { h: 0, s: 0, l: 0, center: 60, width: 60 },
+        greens:   { h: 0, s: 0, l: 0, center: 120, width: 60 },
+        cyans:    { h: 0, s: 0, l: 0, center: 180, width: 60 },
+        blues:    { h: 0, s: 0, l: 0, center: 240, width: 60 },
+        magentas: { h: 0, s: 0, l: 0, center: 300, width: 60 }
+    };
+
+    const defaultCurvesState = {
+        rgb: [{x:0, y:0}, {x:255, y:255}],
+        r:   [{x:0, y:0}, {x:255, y:255}],
+        g:   [{x:0, y:0}, {x:255, y:255}],
+        b:   [{x:0, y:0}, {x:255, y:255}]
     };
 
     let hslState = {
@@ -413,7 +1118,110 @@ export function openTrixCameraRawEditor(node) {
         } catch(e) {}
     }
 
-    let crHistory = [ JSON.stringify({ state, hslState, curvesState }) ];
+    // --- Layers Initialization ---
+    let layers = [];
+    if (node.properties && node.properties.trix_layers) {
+        try {
+            layers = typeof node.properties.trix_layers === "string" 
+                ? JSON.parse(node.properties.trix_layers) 
+                : node.properties.trix_layers;
+            if (Array.isArray(layers)) {
+                layers.forEach(layer => {
+                    if (layer) {
+                        if (!layer.state) layer.state = {};
+                        const sanitizedState = {};
+                        for (const key in defaultCrState) {
+                            const val = layer.state[key];
+                            if (val === undefined || val === null || (typeof val === 'number' && isNaN(val))) {
+                                sanitizedState[key] = defaultCrState[key];
+                            } else {
+                                sanitizedState[key] = val;
+                            }
+                        }
+                        layer.state = sanitizedState;
+
+                        if (!layer.hslState) {
+                            layer.hslState = JSON.parse(JSON.stringify(defaultHslState));
+                        } else {
+                            const hs = layer.hslState;
+                            if (hs.colorize === undefined) hs.colorize = defaultHslState.colorize;
+                            if (!hs.activeChannel) hs.activeChannel = defaultHslState.activeChannel;
+                            for (const ch of ['master', 'reds', 'yellows', 'greens', 'cyans', 'blues', 'magentas']) {
+                                if (!hs[ch]) {
+                                    hs[ch] = { ...defaultHslState[ch] };
+                                } else {
+                                    if (hs[ch].h === undefined || hs[ch].h === null || isNaN(hs[ch].h)) hs[ch].h = 0;
+                                    if (hs[ch].s === undefined || hs[ch].s === null || isNaN(hs[ch].s)) hs[ch].s = 0;
+                                    if (hs[ch].l === undefined || hs[ch].l === null || isNaN(hs[ch].l)) hs[ch].l = 0;
+                                    if (ch !== 'master') {
+                                        if (hs[ch].center === undefined) hs[ch].center = defaultHslState[ch].center;
+                                        if (hs[ch].width === undefined) hs[ch].width = defaultHslState[ch].width;
+                                    }
+                                }
+                            }
+                        }
+
+                        if (!layer.curvesState) {
+                            layer.curvesState = JSON.parse(JSON.stringify(defaultCurvesState));
+                        } else {
+                            layer.curvesState = ensureCurveState(layer.curvesState);
+                        }
+                    }
+                });
+            }
+        } catch (e) {
+            console.error("Failed to parse saved layers:", e);
+        }
+    }
+    let layersMode = (node.properties && node.properties.trix_layers_mode) || "filter";
+    if (!Array.isArray(layers) || layers.length === 0) {
+        layers = [{
+            id: "layer_" + Date.now() + "_" + Math.random().toString(36).substr(2, 9),
+            name: "Layer 1",
+            visible: true,
+            opacity: 100,
+            blendMode: "source-over",
+            state: { ...state },
+            hslState: JSON.parse(JSON.stringify(hslState)),
+            curvesState: JSON.parse(JSON.stringify(curvesState))
+        }];
+    }
+    let selectedLayerIndex = 0;
+    
+    // Sync the active layer state with the fresh ComfyUI node widget values upon opening
+    if (layers && layers[selectedLayerIndex]) {
+        const layerToSync = layers[selectedLayerIndex];
+        for (const key in defaultCrState) {
+            const w = getW(key);
+            if (w && w.value !== undefined && w.value !== null) {
+                layerToSync.state[key] = w.value;
+            }
+        }
+        
+        const wHslData = getW("hsl_data");
+        if (wHslData && wHslData.value && wHslData.value !== "{}") {
+            try {
+                layerToSync.hslState = { ...layerToSync.hslState, ...JSON.parse(wHslData.value) };
+            } catch(e) {}
+        }
+        
+        const wCurveData = getW("curve_data");
+        if (wCurveData && wCurveData.value && wCurveData.value !== "{}") {
+            try {
+                layerToSync.curvesState = ensureCurveState(JSON.parse(wCurveData.value));
+            } catch(e) {}
+        }
+    }
+    
+    // Bind initial references to the selected layer
+    state = layers[selectedLayerIndex].state;
+    hslState = layers[selectedLayerIndex].hslState;
+    curvesState = layers[selectedLayerIndex].curvesState;
+
+    let crHistory = [ JSON.stringify({
+        layers: JSON.parse(JSON.stringify(layers)),
+        selectedLayerIndex: selectedLayerIndex
+    }) ];
     let crHistoryIdx = 0;
 
     let curvesFingerBtn;
@@ -433,6 +1241,607 @@ export function openTrixCameraRawEditor(node) {
         e.preventDefault();
         e.stopPropagation();
     };
+
+    // --- Layers Panel UI ---
+    const layersPanel = document.createElement("div");
+    layersPanel.style.cssText = `
+        width: 0px; min-width: 0px; height: 100%; max-height: 100vh; background: #151515;
+        border-right: 0px solid #333; z-index: 10; overflow: visible;
+        position: relative; transition: width 0.3s ease, min-width 0.3s ease, border-right 0.3s ease;
+    `;
+    
+    const layersPanelContent = document.createElement("div");
+    layersPanelContent.style.cssText = `
+        width: 100%; height: 100%; display: flex; flex-direction: column; overflow: hidden;
+    `;
+    layersPanel.appendChild(layersPanelContent);
+    const layersNotch = document.createElement("div");
+    layersNotch.style.cssText = `
+        position: absolute;
+        left: 100%;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 28px;
+        height: 140px;
+        background: #33789a;
+        border: 1px solid #33789a;
+        border-left: none;
+        border-radius: 0 8px 8px 0;
+        cursor: pointer;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        color: #fff;
+        z-index: 10001;
+        box-shadow: 2px 0 5px rgba(0,0,0,0.3);
+        transition: background 0.2s, color 0.2s, border-color 0.2s;
+        gap: 4px;
+    `;
+    layersNotch.innerHTML = `
+        <span style="font-size: 11px; font-weight: 900; font-family: sans-serif; pointer-events: none; line-height: 1.1; color: #fff;">L</span>
+        <span style="font-size: 11px; font-weight: 900; font-family: sans-serif; pointer-events: none; line-height: 1.1; color: #fff;">A</span>
+        <span style="font-size: 11px; font-weight: 900; font-family: sans-serif; pointer-events: none; line-height: 1.1; color: #fff;">Y</span>
+        <span style="font-size: 11px; font-weight: 900; font-family: sans-serif; pointer-events: none; line-height: 1.1; color: #fff;">E</span>
+        <span style="font-size: 11px; font-weight: 900; font-family: sans-serif; pointer-events: none; line-height: 1.1; color: #fff;">R</span>
+        <span style="font-size: 11px; font-weight: 900; font-family: sans-serif; pointer-events: none; line-height: 1.1; color: #fff;">S</span>
+    `;
+    layersNotch.onmouseenter = () => { layersNotch.style.background = "#3f8eb4"; layersNotch.style.borderColor = "#3f8eb4"; };
+    layersNotch.onmouseleave = () => { layersNotch.style.background = "#33789a"; layersNotch.style.borderColor = "#33789a"; };
+    layersPanel.appendChild(layersNotch);
+    const layersHeader = document.createElement("div");
+    layersHeader.style.cssText = "padding: 18px 18px 10px 18px; border-bottom: 1px solid #333; font-weight: bold; color: #fff; font-size: 14px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; min-height: 50px; box-sizing: border-box;";
+    
+    const titleSpan = document.createElement("span");
+    titleSpan.innerText = "Layers";
+    layersHeader.appendChild(titleSpan);
+
+    const pillContainer = document.createElement("div");
+    pillContainer.title = "Filter Mode: Apply adjustments sequentially (additive).\nImage Mode: Treat each layer as a standalone canvas.";
+    pillContainer.style.cssText = `
+        display: flex;
+        position: relative;
+        background: #111;
+        border: 1px solid #333;
+        border-radius: 12px;
+        padding: 2px;
+        font-size: 10px;
+        cursor: pointer;
+        user-select: none;
+        width: 100px;
+        height: 20px;
+        align-items: center;
+        box-sizing: border-box;
+        margin-left: auto;
+    `;
+
+    const filterBtn = document.createElement("div");
+    filterBtn.innerText = "Filter";
+    filterBtn.style.cssText = `
+        flex: 1;
+        text-align: center;
+        z-index: 2;
+        transition: color 0.2s;
+        font-weight: bold;
+        line-height: 14px;
+        color: #fff;
+    `;
+
+    const imageBtn = document.createElement("div");
+    imageBtn.innerText = "Image";
+    imageBtn.style.cssText = `
+        flex: 1;
+        text-align: center;
+        z-index: 2;
+        transition: color 0.2s;
+        font-weight: bold;
+        line-height: 14px;
+        color: #888;
+    `;
+
+    const pillBg = document.createElement("div");
+    pillBg.style.cssText = `
+        position: absolute;
+        top: 2px;
+        left: 2px;
+        width: 46px;
+        height: 14px;
+        background: #33789a;
+        border-radius: 9px;
+        transition: transform 0.2s ease;
+        z-index: 1;
+    `;
+
+    pillContainer.append(pillBg, filterBtn, imageBtn);
+    layersHeader.appendChild(pillContainer);
+    layersPanelContent.appendChild(layersHeader);
+
+    const setLayersMode = (mode) => {
+        layersMode = mode;
+        if (mode === "filter") {
+            pillBg.style.transform = "translateX(0px)";
+            filterBtn.style.color = "#fff";
+            imageBtn.style.color = "#888";
+        } else {
+            pillBg.style.transform = "translateX(48px)";
+            filterBtn.style.color = "#888";
+            imageBtn.style.color = "#fff";
+        }
+        scheduleRender();
+    };
+
+    filterBtn.onclick = (e) => {
+        e.stopPropagation();
+        setLayersMode("filter");
+    };
+    imageBtn.onclick = (e) => {
+        e.stopPropagation();
+        setLayersMode("image");
+    };
+    pillContainer.onclick = () => {
+        if (layersMode === "filter") {
+            setLayersMode("image");
+        } else {
+            setLayersMode("filter");
+        }
+    };
+    
+    setTimeout(() => {
+        setLayersMode(layersMode);
+    }, 0);
+
+    const layersListContainer = document.createElement("div");
+    layersListContainer.style.cssText = "flex: 1; overflow-y: auto; padding: 12px; box-sizing: border-box; display: flex; flex-direction: column; gap: 8px;";
+    layersListContainer.className = "trix-cr-panel";
+    layersPanelContent.appendChild(layersListContainer);
+
+    const layersButtonsRow = document.createElement("div");
+    layersButtonsRow.style.cssText = "display: flex; gap: 8px; margin-top: 4px; flex-shrink: 0; width: 100%; box-sizing: border-box;";
+
+    const addLayerBtn = document.createElement("button");
+    addLayerBtn.innerText = "Add New";
+    addLayerBtn.style.cssText = "flex: 1; padding: 8px; background: #2a2a2f; color: #eee; border: 1px solid #444; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold; transition: 0.2s;";
+    addLayerBtn.onmouseenter = () => { addLayerBtn.style.background = "#333a45"; addLayerBtn.style.color = "#fff"; };
+    addLayerBtn.onmouseleave = () => { addLayerBtn.style.background = "#2a2a2f"; addLayerBtn.style.color = "#eee"; };
+
+    const duplicateLayerBtn = document.createElement("button");
+    duplicateLayerBtn.innerText = "Duplicate";
+    duplicateLayerBtn.style.cssText = "flex: 1; padding: 8px; background: #2a2a2f; color: #eee; border: 1px solid #444; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold; transition: 0.2s;";
+    duplicateLayerBtn.onmouseenter = () => { duplicateLayerBtn.style.background = "#333a45"; duplicateLayerBtn.style.color = "#fff"; };
+    duplicateLayerBtn.onmouseleave = () => { duplicateLayerBtn.style.background = "#2a2a2f"; duplicateLayerBtn.style.color = "#eee"; };
+
+    layersButtonsRow.appendChild(addLayerBtn);
+    layersButtonsRow.appendChild(duplicateLayerBtn);
+    
+    const blendModes = [
+        { value: "source-over", label: "Normal" },
+        { value: "multiply", label: "Multiply" },
+        { value: "screen", label: "Screen" },
+        { value: "overlay", label: "Overlay" },
+        { value: "darken", label: "Darken" },
+        { value: "lighten", label: "Lighten" },
+        { value: "color-dodge", label: "Color Dodge" },
+        { value: "color-burn", label: "Color Burn" },
+        { value: "hard-light", label: "Hard Light" },
+        { value: "soft-light", label: "Soft Light" },
+        { value: "difference", label: "Difference" },
+        { value: "exclusion", label: "Exclusion" },
+        { value: "hue", label: "Hue" },
+        { value: "saturation", label: "Saturation" },
+        { value: "color", label: "Color" },
+        { value: "luminosity", label: "Luminosity" }
+    ];
+
+    const updateRightPanelUI = () => {
+        for (const key in state) {
+            const iEl = document.getElementById(`cr_input_${key}`);
+            const sEl = document.getElementById(`cr_slider_${key}`);
+            if (iEl) iEl.value = state[key];
+            if (sEl) sEl.value = state[key];
+        }
+        const sketchColorEl = document.getElementById("cr_sketch_color");
+        if (sketchColorEl) sketchColorEl.value = state.cr_sketch_color;
+        const pixelAlgoEl = document.getElementById("cr_pixel_algo");
+        if (pixelAlgoEl) pixelAlgoEl.value = state.cr_pixel_algo;
+
+        const cfHueInputEl = document.getElementById("cr_cf_hue_input");
+        if (cfHueInputEl) cfHueInputEl.value = state.cr_cf_hue;
+
+        const blurModeEl = document.getElementById("cr_blur_mode");
+        if (blurModeEl) blurModeEl.value = state.cr_blur_mode;
+
+        const htShapeEl = document.getElementById("cr_ht_shape");
+        if (htShapeEl) htShapeEl.value = state.cr_ht_shape;
+
+        const htInverseEl = document.getElementById("cr_ht_inverse");
+        if (htInverseEl) htInverseEl.checked = !!state.cr_ht_inverse;
+
+        const postEnableEl = document.getElementById("cr_post_enable");
+        if (postEnableEl) postEnableEl.checked = !!state.cr_post_enable;
+
+        const lapKernelEl = document.getElementById("cr_lap_kernel");
+        if (lapKernelEl) lapKernelEl.value = state.cr_lap_kernel;
+
+        const postModeEl = document.getElementById("cr_post_mode");
+        if (postModeEl) postModeEl.value = state.cr_post_mode;
+
+        const postDitherModeEl = document.getElementById("cr_post_dither_mode");
+        if (postDitherModeEl) postDitherModeEl.value = state.cr_post_dither_mode;
+
+        const lvlChannelEl = document.getElementById("cr_lvl_channel");
+        if (lvlChannelEl) lvlChannelEl.value = state.cr_lvl_channel;
+
+        if (typeof drawCfWheel === "function") {
+            try { drawCfWheel(); } catch(e) {}
+        }
+        if (typeof drawLevelsBar === "function") {
+            try { drawLevelsBar(); } catch(e) {}
+        }
+        if (typeof drawHtDial === "function") {
+            try { drawHtDial(); } catch(e) {}
+        }
+        if (typeof drawCbWheels === "function") {
+            try { drawCbWheels(); } catch(e) {}
+        }
+
+        updateHslUI();
+        updateCurvesUI();
+        if (typeof updatePanelActiveColoring === 'function') updatePanelActiveColoring();
+    };
+
+    const renderLayersList = () => {
+        layersListContainer.innerHTML = "";
+        
+        for (let idx = 0; idx < layers.length; idx++) {
+            const layer = layers[idx];
+            
+            const block = document.createElement("div");
+            block.draggable = true;
+            block.style.cssText = `
+                padding: 8px 10px;
+                background: #1a1a1a;
+                border: 1px solid ${selectedLayerIndex === idx ? "#33789a" : "#444"};
+                border-radius: 4px;
+                display: flex;
+                flex-direction: column;
+                cursor: grab;
+                transition: border-color 0.2s, background 0.2s;
+                user-select: none;
+            `;
+            if (selectedLayerIndex !== idx) {
+                block.onmouseenter = () => block.style.borderColor = "#666";
+                block.onmouseleave = () => block.style.borderColor = "#444";
+            }
+            block.onclick = () => {
+                if (selectedLayerIndex !== idx) {
+                    selectedLayerIndex = idx;
+                    state = layers[selectedLayerIndex].state;
+                    hslState = layers[selectedLayerIndex].hslState;
+                    curvesState = layers[selectedLayerIndex].curvesState;
+                    updateRightPanelUI();
+                    renderLayersList();
+                }
+            };
+            
+            // Row 1
+            const row1 = document.createElement("div");
+            row1.style.cssText = "display: flex; align-items: center; justify-content: space-between; width: 100%;";
+            
+            const label = document.createElement("span");
+            label.innerText = layer.name;
+            label.style.cssText = "color: #eee; font-size: 11px; font-weight: bold; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; margin-right: 6px; cursor: pointer;";
+            label.title = "Double-click to rename";
+            
+            label.ondblclick = (e) => {
+                e.stopPropagation();
+                
+                const input = document.createElement("input");
+                input.type = "text";
+                input.value = layer.name;
+                input.style.cssText = "background: #2a2a2f; color: #fff; border: 1px solid #33789a; border-radius: 3px; font-size: 11px; padding: 2px 4px; width: 100%; box-sizing: border-box; font-family: inherit; font-weight: bold; outline: none; margin: 0;";
+                
+                row1.replaceChild(input, label);
+                input.focus();
+                input.select();
+                
+                let finished = false;
+                const finishRename = () => {
+                    if (finished) return;
+                    finished = true;
+                    const val = input.value.trim();
+                    if (val) {
+                        layer.name = val;
+                    }
+                    renderLayersList();
+                    pushCrHistory();
+                };
+                
+                input.onblur = finishRename;
+                input.onkeydown = (evt) => {
+                    if (evt.key === "Enter") {
+                        evt.preventDefault();
+                        finishRename();
+                    } else if (evt.key === "Escape") {
+                        evt.preventDefault();
+                        finished = true;
+                        renderLayersList();
+                    }
+                    evt.stopPropagation();
+                };
+                
+                input.onclick = (evt) => evt.stopPropagation();
+                input.onmousedown = (evt) => evt.stopPropagation();
+            };
+            
+            const btns = document.createElement("div");
+            btns.style.cssText = "display: flex; gap: 4px; align-items: center;";
+            
+            // Eye Button
+            const eyeBtn = document.createElement("button");
+            eyeBtn.innerHTML = "👁";
+            eyeBtn.title = layer.visible ? "Hide Layer" : "Show Layer";
+            eyeBtn.style.cssText = `
+                background: none; border: none;
+                color: #eee;
+                opacity: ${layer.visible ? "1" : "0.25"};
+                cursor: pointer; padding: 2px 4px; font-size: 12px;
+                display: flex; align-items: center; justify-content: center;
+                transition: opacity 0.1s, color 0.1s;
+            `;
+            eyeBtn.onmouseenter = () => { eyeBtn.style.color = "#33789a"; };
+            eyeBtn.onmouseleave = () => { eyeBtn.style.color = "#eee"; };
+            eyeBtn.onclick = (e) => {
+                e.stopPropagation();
+                layer.visible = !layer.visible;
+                pushCrHistory();
+                scheduleRender();
+                renderLayersList();
+            };
+            
+            // Blend Mode Button
+            const blendBtn = document.createElement("button");
+            blendBtn.innerHTML = "❐";
+            blendBtn.title = "Blending Mode: " + (blendModes.find(m => m.value === layer.blendMode)?.label || "Normal");
+            blendBtn.style.cssText = "background: none; border: none; color: #aaa; cursor: pointer; padding: 2px 4px; font-size: 12px; display: flex; align-items: center; justify-content: center; transition: color 0.1s;";
+            blendBtn.onmouseenter = () => blendBtn.style.color = "#fff";
+            blendBtn.onmouseleave = () => blendBtn.style.color = "#aaa";
+            blendBtn.onclick = (e) => {
+                e.stopPropagation();
+                const existingMenu = document.getElementById("trix-blend-menu");
+                if (existingMenu) existingMenu.remove();
+                
+                const menu = document.createElement("div");
+                menu.id = "trix-blend-menu";
+                menu.style.cssText = `
+                    position: absolute;
+                    background: #18181c;
+                    border: 1px solid #3d3d42;
+                    border-radius: 4px;
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+                    z-index: 10002;
+                    max-height: 250px;
+                    overflow-y: auto;
+                    padding: 4px 0;
+                    min-width: 120px;
+                `;
+                const rect = blendBtn.getBoundingClientRect();
+                menu.style.top = `${rect.bottom + window.scrollY + 4}px`;
+                menu.style.left = `${rect.left + window.scrollX}px`;
+                
+                blendModes.forEach(mode => {
+                    const item = document.createElement("div");
+                    item.innerText = mode.label;
+                    item.style.cssText = `
+                        padding: 6px 12px;
+                        cursor: pointer;
+                        color: ${layer.blendMode === mode.value ? "#33789a" : "#eee"};
+                        font-size: 11px;
+                        font-weight: ${layer.blendMode === mode.value ? "bold" : "normal"};
+                        transition: background 0.1s;
+                    `;
+                    item.onmouseenter = () => item.style.background = "#2a2a30";
+                    item.onmouseleave = () => item.style.background = "transparent";
+                    item.onclick = (evt) => {
+                        evt.stopPropagation();
+                        layer.blendMode = mode.value;
+                        blendBtn.title = "Blending Mode: " + mode.label;
+                        menu.remove();
+                        pushCrHistory();
+                        scheduleRender();
+                        renderLayersList();
+                    };
+                    menu.appendChild(item);
+                });
+                document.body.appendChild(menu);
+                const closeMenu = () => {
+                    menu.remove();
+                    document.removeEventListener("click", closeMenu);
+                };
+                setTimeout(() => { document.addEventListener("click", closeMenu); }, 10);
+            };
+            
+            // Delete Button
+            const delBtn = document.createElement("button");
+            delBtn.innerHTML = "✕";
+            delBtn.title = "Delete Layer";
+            delBtn.style.cssText = `
+                background: none; border: none;
+                color: #eee;
+                opacity: ${layers.length > 1 ? "0.6" : "0.1"};
+                cursor: ${layers.length > 1 ? "pointer" : "default"};
+                padding: 2px 4px; font-size: 11px;
+                display: flex; align-items: center; justify-content: center;
+                transition: opacity 0.1s, color 0.1s;
+            `;
+            if (layers.length > 1) {
+                delBtn.onmouseenter = () => { delBtn.style.color = "#ff4757"; delBtn.style.opacity = "1"; };
+                delBtn.onmouseleave = () => { delBtn.style.color = "#eee"; delBtn.style.opacity = "0.6"; };
+                delBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    if (confirm(`Delete layer "${layer.name}"?`)) {
+                        layers.splice(idx, 1);
+                        if (selectedLayerIndex >= layers.length) {
+                            selectedLayerIndex = layers.length - 1;
+                        }
+                        state = layers[selectedLayerIndex].state;
+                        hslState = layers[selectedLayerIndex].hslState;
+                        curvesState = layers[selectedLayerIndex].curvesState;
+                        updateRightPanelUI();
+                        renderLayersList();
+                        pushCrHistory();
+                        scheduleRender();
+                    }
+                };
+            }
+            
+            btns.append(eyeBtn, blendBtn, delBtn);
+            row1.append(label, btns);
+            
+            // Row 2: Opacity
+            const opacityRow = document.createElement("div");
+            opacityRow.style.cssText = "display: flex; align-items: center; gap: 8px; margin-top: 6px; width: 100%; box-sizing: border-box;";
+            
+            const slider = document.createElement("input");
+            slider.type = "range";
+            slider.min = "0";
+            slider.max = "100";
+            slider.value = layer.opacity;
+            slider.style.cssText = "flex: 1; height: 4px; accent-color: #33789a; cursor: pointer; margin: 0;";
+            
+            const percent = document.createElement("span");
+            percent.innerText = layer.opacity + "%";
+            percent.style.cssText = "color: #888; font-size: 10px; min-width: 28px; text-align: right;";
+            
+            slider.oninput = (e) => {
+                layer.opacity = parseInt(e.target.value);
+                percent.innerText = layer.opacity + "%";
+                scheduleRender();
+            };
+            slider.onchange = () => {
+                pushCrHistory();
+            };
+            
+            // Avoid drag conflict
+            [slider, eyeBtn, blendBtn, delBtn].forEach(el => {
+                el.addEventListener("mousedown", (e) => {
+                    e.stopPropagation();
+                    block.draggable = false;
+                });
+                el.addEventListener("mouseup", () => { block.draggable = true; });
+                el.addEventListener("mouseleave", () => { block.draggable = true; });
+            });
+            
+            opacityRow.append(slider, percent);
+            block.append(row1, opacityRow);
+            
+            // Drag and Drop
+            block.addEventListener("dragstart", (e) => {
+                e.dataTransfer.setData("text/plain", idx);
+                block.style.opacity = "0.4";
+            });
+            block.addEventListener("dragend", () => {
+                block.style.opacity = "1";
+            });
+            block.addEventListener("dragover", (e) => {
+                e.preventDefault();
+            });
+            block.addEventListener("drop", (e) => {
+                e.preventDefault();
+                const srcIdx = parseInt(e.dataTransfer.getData("text/plain"));
+                const destIdx = idx;
+                if (srcIdx !== destIdx && !isNaN(srcIdx)) {
+                    const [moved] = layers.splice(srcIdx, 1);
+                    layers.splice(destIdx, 0, moved);
+                    if (selectedLayerIndex === srcIdx) {
+                        selectedLayerIndex = destIdx;
+                    } else if (selectedLayerIndex > srcIdx && selectedLayerIndex <= destIdx) {
+                        selectedLayerIndex--;
+                    } else if (selectedLayerIndex < srcIdx && selectedLayerIndex >= destIdx) {
+                        selectedLayerIndex++;
+                    }
+                    state = layers[selectedLayerIndex].state;
+                    hslState = layers[selectedLayerIndex].hslState;
+                    curvesState = layers[selectedLayerIndex].curvesState;
+                    updateRightPanelUI();
+                    renderLayersList();
+                    pushCrHistory();
+                    scheduleRender();
+                }
+            });
+            
+            layersListContainer.appendChild(block);
+        }
+        
+        layersListContainer.appendChild(layersButtonsRow);
+    };
+
+    addLayerBtn.onclick = () => {
+        const newLayer = {
+            id: "layer_" + Date.now() + "_" + Math.random().toString(36).substr(2, 9),
+            name: "Layer " + (layers.length + 1),
+            visible: true,
+            opacity: 100,
+            blendMode: "source-over",
+            state: JSON.parse(JSON.stringify(defaultCrState)),
+            hslState: JSON.parse(JSON.stringify(defaultHslState)),
+            curvesState: ensureCurveState(JSON.parse(JSON.stringify(defaultCurvesState)))
+        };
+        layers.push(newLayer);
+        selectedLayerIndex = layers.length - 1;
+        state = layers[selectedLayerIndex].state;
+        hslState = layers[selectedLayerIndex].hslState;
+        curvesState = layers[selectedLayerIndex].curvesState;
+        updateRightPanelUI();
+        renderLayersList();
+        pushCrHistory();
+        scheduleRender();
+    };
+
+    duplicateLayerBtn.onclick = () => {
+        if (selectedLayerIndex < 0 || selectedLayerIndex >= layers.length) return;
+        const srcLayer = layers[selectedLayerIndex];
+        
+        const duplicatedLayer = {
+            id: "layer_" + Date.now() + "_" + Math.random().toString(36).substr(2, 9),
+            name: srcLayer.name + " Copy",
+            visible: srcLayer.visible,
+            opacity: srcLayer.opacity,
+            blendMode: srcLayer.blendMode,
+            state: JSON.parse(JSON.stringify(srcLayer.state)),
+            hslState: JSON.parse(JSON.stringify(srcLayer.hslState)),
+            curvesState: ensureCurveState(JSON.parse(JSON.stringify(srcLayer.curvesState)))
+        };
+        
+        const targetIndex = selectedLayerIndex + 1;
+        layers.splice(targetIndex, 0, duplicatedLayer);
+        selectedLayerIndex = targetIndex;
+        state = layers[selectedLayerIndex].state;
+        hslState = layers[selectedLayerIndex].hslState;
+        curvesState = layers[selectedLayerIndex].curvesState;
+        
+        updateRightPanelUI();
+        renderLayersList();
+        pushCrHistory();
+        scheduleRender();
+    };
+
+    let layersPanelOpen = false;
+    layersNotch.onclick = () => {
+        layersPanelOpen = !layersPanelOpen;
+        if (layersPanelOpen) {
+            layersPanel.style.width = "220px";
+            layersPanel.style.minWidth = "220px";
+            layersPanel.style.borderRight = "1px solid #333";
+        } else {
+            layersPanel.style.width = "0px";
+            layersPanel.style.minWidth = "0px";
+            layersPanel.style.borderRight = "0px solid #333";
+        }
+        onResize();
+    };
+    layersPanel.addEventListener("transitionend", () => {
+        onResize();
+    });
 
     const workspace = document.createElement("div");
     workspace.style.cssText = `
@@ -662,86 +2071,78 @@ export function openTrixCameraRawEditor(node) {
     // ==============================================================================
     // PRESETS SYSTEM PANEL
     // ==============================================================================
-    const defaultCrState = {
-        cr_offset: 0, cr_exp: 0, cr_cont: 0, cr_high: 0, cr_shad: 0, cr_white: 0, cr_black: 0,
-        cr_temp: 0, cr_tint: 0, cr_vibrance: 0, cr_colorfulness: 0, cr_sat: 0,
-        cr_tex: 0, cr_clar: 0, cr_dehz: 0, cr_sharp: 0, cr_denoise: 0,
-        cr_blur: 0, cr_surface_blur: 0, cr_grain: 0, cr_vignette: 0,
-        cr_sketch_kernel_size: 0, cr_sketch_sigma: 1.4, cr_sketch_k_sigma: 1.6, cr_sketch_epsilon: -0.03, cr_sketch_phi: 10.0, cr_sketch_gamma: 1.0, cr_sketch_color: 'gray',
-        cr_pixel_colors: 128, cr_pixel_dot_size: 0, cr_pixel_outline: 0, cr_pixel_smoothing: 0, cr_pixel_algo: 'kmeans'
-    };
-
-    const defaultHslState = {
-        colorize: false,
-        activeChannel: 'master',
-        master:   { h: 0, s: 0, l: 0 },
-        reds:     { h: 0, s: 0, l: 0, center: 0, width: 60 },
-        yellows:  { h: 0, s: 0, l: 0, center: 60, width: 60 },
-        greens:   { h: 0, s: 0, l: 0, center: 120, width: 60 },
-        cyans:    { h: 0, s: 0, l: 0, center: 180, width: 60 },
-        blues:    { h: 0, s: 0, l: 0, center: 240, width: 60 },
-        magentas: { h: 0, s: 0, l: 0, center: 300, width: 60 }
-    };
-
-    const defaultCurvesState = {
-        rgb: [{x:0, y:0}, {x:255, y:255}],
-        r:   [{x:0, y:0}, {x:255, y:255}],
-        g:   [{x:0, y:0}, {x:255, y:255}],
-        b:   [{x:0, y:0}, {x:255, y:255}]
-    };
-
     const builtInPresets = [
         {
             name: "Soft Portrait",
-            state: { cr_temp: 8, cr_exp: 5, cr_cont: -10, cr_shad: 15, cr_white: -5, cr_sat: 5, cr_vibrance: 10, cr_colorfulness: 10, cr_tex: -15, cr_denoise: 10 }
+            state: { cr_temp: 8, cr_exp: 5, cr_cont: -10, cr_shad: 15, cr_white: -5, cr_sat: 5, cr_vibrance: 10, cr_tex: -15, cr_denoise: 10 }
         },
         {
             name: "Classic Film Portra",
-            state: { cr_temp: 6, cr_tint: 2, cr_cont: 8, cr_high: -10, cr_shad: 12, cr_vibrance: 8, cr_colorfulness: 8, cr_grain: 12, cr_vignette: 8 }
+            state: { cr_temp: 6, cr_tint: 2, cr_cont: 8, cr_high: -10, cr_shad: 12, cr_vibrance: 8, cr_grain: 12, cr_vignette: 8 }
         },
         {
             name: "Muted Sage Landscape",
-            state: { cr_temp: -5, cr_tint: -3, cr_cont: 5, cr_high: -8, cr_shad: 10, cr_sat: -15, cr_vibrance: 5, cr_colorfulness: 5, cr_clar: 8, cr_vignette: 12 }
+            state: { cr_temp: -5, cr_tint: -3, cr_cont: 5, cr_high: -8, cr_shad: 10, cr_sat: -15, cr_vibrance: 5, cr_clar: 8, cr_vignette: 12 }
         },
         {
             name: "Warm Editorial",
-            state: { cr_temp: 10, cr_tint: 4, cr_exp: 6, cr_cont: 5, cr_shad: 5, cr_white: 10, cr_black: -5, cr_vibrance: 12, cr_colorfulness: 12, cr_tex: 8, cr_vignette: 6 }
+            state: { cr_temp: 10, cr_tint: 4, cr_exp: 6, cr_cont: 5, cr_shad: 5, cr_white: 10, cr_black: -5, cr_vibrance: 12, cr_tex: 8, cr_vignette: 6 }
         },
         {
             name: "Nordic Fog",
-            state: { cr_temp: -12, cr_tint: -2, cr_cont: 8, cr_high: -10, cr_shad: 5, cr_sat: -20, cr_vibrance: 5, cr_colorfulness: 5, cr_dehz: -5, cr_denoise: 15 }
+            state: { cr_temp: -12, cr_tint: -2, cr_cont: 8, cr_high: -10, cr_shad: 5, cr_sat: -20, cr_vibrance: 5, cr_dehz: -5, cr_denoise: 15 }
         },
         {
             name: "Cinematic Teal & Orange",
-            state: { cr_temp: -8, cr_tint: 8, cr_exp: 3, cr_cont: 12, cr_high: 5, cr_shad: 10, cr_vibrance: 18, cr_colorfulness: 18, cr_sat: 5, cr_vignette: 15 }
+            state: { cr_temp: -8, cr_tint: 8, cr_exp: 3, cr_cont: 12, cr_high: 5, cr_shad: 10, cr_vibrance: 18, cr_sat: 5, cr_vignette: 15 }
         },
         {
             name: "Monochrome Grain",
-            state: { cr_sat: -100, cr_vibrance: -100, cr_colorfulness: -100, cr_cont: 25, cr_high: 10, cr_shad: -10, cr_clar: 20, cr_grain: 25, cr_vignette: 18 }
+            state: { cr_sat: -100, cr_vibrance: -100, cr_cont: 25, cr_high: 10, cr_shad: -10, cr_clar: 20, cr_grain: 25, cr_vignette: 18 }
         },
         {
             name: "Soft Matte Dream",
-            state: { cr_offset: 15, cr_exp: 10, cr_cont: -15, cr_high: 10, cr_shad: 20, cr_sat: -5, cr_vibrance: 10, cr_colorfulness: 10, cr_blur: 15, cr_vignette: 10 }
+            state: { cr_offset: 15, cr_exp: 10, cr_cont: -15, cr_high: 10, cr_shad: 20, cr_sat: -5, cr_vibrance: 10, cr_blur: 15, cr_vignette: 10 }
         },
         {
             name: "Vintage Polaroid",
-            state: { cr_offset: 18, cr_temp: 12, cr_tint: 5, cr_cont: -10, cr_high: -8, cr_shad: 15, cr_sat: -10, cr_vibrance: 8, cr_colorfulness: 8, cr_grain: 18, cr_vignette: 15 }
+            state: { cr_offset: 18, cr_temp: 12, cr_tint: 5, cr_cont: -10, cr_high: -8, cr_shad: 15, cr_sat: -10, cr_vibrance: 8, cr_grain: 18, cr_vignette: 15 }
         },
         {
             name: "Clean Minimalist",
-            state: { cr_exp: 12, cr_cont: -5, cr_high: -10, cr_shad: 10, cr_white: 12, cr_black: 5, cr_sat: -12, cr_vibrance: 5, cr_colorfulness: 5, cr_sharp: 12 }
+            state: { cr_exp: 12, cr_cont: -5, cr_high: -10, cr_shad: 10, cr_white: 12, cr_black: 5, cr_sat: -12, cr_vibrance: 5, cr_sharp: 12 }
         },
         {
             name: "Golden Hour",
-            state: { cr_temp: 18, cr_tint: 5, cr_exp: 8, cr_cont: 5, cr_high: 8, cr_shad: 10, cr_sat: 12, cr_vibrance: 15, cr_colorfulness: 15, cr_vignette: 10 }
+            state: { cr_temp: 18, cr_tint: 5, cr_exp: 8, cr_cont: 5, cr_high: 8, cr_shad: 10, cr_sat: 12, cr_vibrance: 15, cr_vignette: 10 }
         },
         {
             name: "Blue Hour Dusk",
-            state: { cr_temp: -20, cr_tint: 6, cr_cont: 10, cr_shad: 5, cr_white: -10, cr_sat: -5, cr_vibrance: 15, cr_colorfulness: 15, cr_dehz: 8, cr_vignette: 12 }
+            state: { cr_temp: -20, cr_tint: 6, cr_cont: 10, cr_shad: 5, cr_white: -10, cr_sat: -5, cr_vibrance: 15, cr_dehz: 8, cr_vignette: 12 }
+        },
+        {
+            name: "Studio Clean",
+            state: { cr_temp: 2, cr_tint: 1, cr_exp: 5, cr_cont: -5, cr_high: -12, cr_shad: 10, cr_white: 8, cr_black: 2, cr_vibrance: 12, cr_sat: -2, cr_tex: 5, cr_clar: 2, cr_sharp: 15, cr_denoise: 15 }
+        },
+        {
+            name: "HDR Natural",
+            state: { cr_exp: 2, cr_cont: 15, cr_high: -45, cr_shad: 50, cr_white: -15, cr_black: 15, cr_vibrance: 15, cr_sat: 2, cr_dehz: 10, cr_clar: 12, cr_tex: 8 }
+        },
+        {
+            name: "Sunset Glow",
+            state: { cr_temp: 22, cr_tint: 6, cr_exp: 8, cr_cont: 10, cr_high: -15, cr_shad: 12, cr_white: 10, cr_black: -8, cr_vibrance: 20, cr_sat: 5, cr_vignette: 12, cr_clar: 10 }
+        },
+        {
+            name: "Faded Film",
+            state: { cr_offset: 12, cr_temp: 4, cr_tint: -2, cr_exp: -2, cr_cont: -12, cr_high: -20, cr_shad: 25, cr_white: -10, cr_black: 10, cr_vibrance: 5, cr_sat: -8, cr_grain: 15, cr_vignette: 15 }
+        },
+        {
+            name: "Crystal Clear",
+            state: { cr_temp: -4, cr_exp: 5, cr_cont: 8, cr_high: -15, cr_shad: 8, cr_white: 12, cr_black: -5, cr_vibrance: 14, cr_sat: 2, cr_dehz: 15, cr_clar: 18, cr_tex: 12, cr_sharp: 20 }
         },
         {
             name: "Retro Arcade (Subtle Pixel)",
-            state: { cr_temp: 5, cr_cont: 12, cr_sat: 15, cr_vibrance: 15, cr_colorfulness: 15, cr_clar: 15, cr_grain: 10, cr_pixel_dot_size: 2, cr_pixel_colors: 64, cr_pixel_smoothing: 0, cr_pixel_algo: 'kmeans' }
+            state: { cr_temp: 5, cr_cont: 12, cr_sat: 15, cr_vibrance: 15, cr_clar: 15, cr_grain: 10, cr_pixel_dot_size: 2, cr_pixel_colors: 64, cr_pixel_smoothing: 0, cr_pixel_algo: 'kmeans' }
         },
         {
             name: "Pencil Sketch Blend",
@@ -749,23 +2150,23 @@ export function openTrixCameraRawEditor(node) {
         },
         {
             name: "Vintage Newspaper",
-            state: { cr_sat: -100, cr_vibrance: -100, cr_colorfulness: -100, cr_cont: 30, cr_clar: 25, cr_grain: 30, cr_pixel_dot_size: 2, cr_pixel_colors: 16, cr_pixel_outline: 1, cr_pixel_algo: 'kmeans' }
+            state: { cr_sat: -100, cr_vibrance: -100, cr_cont: 30, cr_clar: 25, cr_grain: 30, cr_pixel_dot_size: 2, cr_pixel_colors: 16, cr_pixel_outline: 1, cr_pixel_algo: 'kmeans' }
         },
         {
             name: "Mist & Fog",
-            state: { cr_temp: -5, cr_tint: -2, cr_exp: 5, cr_cont: -10, cr_high: -15, cr_shad: 15, cr_sat: -25, cr_vibrance: -10, cr_colorfulness: -10, cr_dehz: -15, cr_surface_blur: 8 }
+            state: { cr_temp: -5, cr_tint: -2, cr_exp: 5, cr_cont: -10, cr_high: -15, cr_shad: 15, cr_sat: -25, cr_vibrance: -10, cr_dehz: -15, cr_surface_blur: 8 }
         },
         {
             name: "Moody Noir",
-            state: { cr_exp: -15, cr_cont: 25, cr_high: -12, cr_shad: -18, cr_black: -15, cr_sat: -20, cr_vibrance: -10, cr_colorfulness: -10, cr_clar: 15, cr_dehz: 10, cr_vignette: 25 }
+            state: { cr_exp: -15, cr_cont: 25, cr_high: -12, cr_shad: -18, cr_black: -15, cr_sat: -20, cr_vibrance: -10, cr_clar: 15, cr_dehz: 10, cr_vignette: 25 }
         },
         {
             name: "Dreamy Glow",
-            state: { cr_exp: 5, cr_cont: 10, cr_high: 15, cr_shad: 15, cr_sat: 8, cr_vibrance: 10, cr_colorfulness: 10, cr_surface_blur: 15, cr_clar: -10 }
+            state: { cr_exp: 5, cr_cont: 10, cr_high: 15, cr_shad: 15, cr_sat: 8, cr_vibrance: 10, cr_surface_blur: 15, cr_clar: -10 }
         },
         {
             name: "Lofi Cyber",
-            state: { cr_temp: -12, cr_tint: 12, cr_exp: 5, cr_cont: 10, cr_shad: 10, cr_sat: 10, cr_vibrance: 15, cr_colorfulness: 15, cr_pixel_dot_size: 2, cr_pixel_colors: 128, cr_pixel_smoothing: 1 }
+            state: { cr_temp: -12, cr_tint: 12, cr_exp: 5, cr_cont: 10, cr_shad: 10, cr_sat: 10, cr_vibrance: 15, cr_pixel_dot_size: 2, cr_pixel_colors: 128, cr_pixel_smoothing: 1 }
         }
     ];
 
@@ -798,25 +2199,15 @@ export function openTrixCameraRawEditor(node) {
             newState.cr_vibrance = preset.state.cr_colorfulness;
         }
 
-        state = newState;
-        hslState = newHslState;
-        curvesState = newCurvesState;
+        layers[selectedLayerIndex].state = newState;
+        layers[selectedLayerIndex].hslState = newHslState;
+        layers[selectedLayerIndex].curvesState = newCurvesState;
+        state = layers[selectedLayerIndex].state;
+        hslState = layers[selectedLayerIndex].hslState;
+        curvesState = layers[selectedLayerIndex].curvesState;
+        renderLayersList();
         
-        for (const key in state) {
-            const iEl = document.getElementById(`cr_input_${key}`);
-            const sEl = document.getElementById(`cr_slider_${key}`);
-            if (iEl) iEl.value = state[key];
-            if (sEl) sEl.value = state[key];
-        }
-        
-        const sketchColorEl = document.getElementById("cr_sketch_color");
-        if (sketchColorEl) sketchColorEl.value = state.cr_sketch_color;
-        
-        const pixelAlgoEl = document.getElementById("cr_pixel_algo");
-        if (pixelAlgoEl) pixelAlgoEl.value = state.cr_pixel_algo;
-        
-        updateHslUI();
-        updateCurvesUI();
+        updateRightPanelUI();
         pushCrHistory();
         scheduleRender();
     };
@@ -1163,7 +2554,11 @@ export function openTrixCameraRawEditor(node) {
     };
 
     const pushCrHistory = () => {
-        const currentStateStr = JSON.stringify({ state, hslState, curvesState });
+        const snapshot = {
+            layers: JSON.parse(JSON.stringify(layers)),
+            selectedLayerIndex: selectedLayerIndex
+        };
+        const currentStateStr = JSON.stringify(snapshot);
         if (crHistory[crHistoryIdx] === currentStateStr) return; 
         crHistory = crHistory.slice(0, crHistoryIdx + 1);
         crHistory.push(currentStateStr);
@@ -1175,19 +2570,17 @@ export function openTrixCameraRawEditor(node) {
     const applyHistoryState = (idx) => {
         if (idx < 0 || idx >= crHistory.length) return;
         crHistoryIdx = idx;
-        const saved = JSON.parse(crHistory[crHistoryIdx]);
-        state = saved.state || state;
-        hslState = saved.hslState || hslState;
-        curvesState = ensureCurveState(saved.curvesState || curvesState);
+        const snapshot = JSON.parse(crHistory[crHistoryIdx]);
         
-        for (const key in state) {
-            const iEl = document.getElementById(`cr_input_${key}`);
-            const sEl = document.getElementById(`cr_slider_${key}`);
-            if (iEl) iEl.value = state[key];
-            if (sEl) sEl.value = state[key];
-        }
-        updateHslUI();
-        updateCurvesUI();
+        layers = snapshot.layers;
+        selectedLayerIndex = snapshot.selectedLayerIndex;
+        
+        state = layers[selectedLayerIndex].state;
+        hslState = layers[selectedLayerIndex].hslState;
+        curvesState = layers[selectedLayerIndex].curvesState;
+        
+        updateRightPanelUI();
+        renderLayersList();
         updateHistoryBtns();
         scheduleRender();
     };
@@ -1195,6 +2588,52 @@ export function openTrixCameraRawEditor(node) {
     undoBtn.onclick = () => applyHistoryState(crHistoryIdx - 1);
     redoBtn.onclick = () => applyHistoryState(crHistoryIdx + 1);
     updateHistoryBtns();
+
+    
+    const panelTrackers = [];
+    const updatePanelActiveColoring = () => {
+        panelTrackers.forEach(p => {
+            let isChanged = false;
+            
+            // Check custom panels
+            if (p.titleText === "Curves") {
+                isChanged = curvesHasAdjustments(curvesState);
+            } else if (p.titleText === "Hue/Saturation") {
+                isChanged = hslState.colorize || ['master','reds','yellows','greens','cyans','blues','magentas'].some(ch => {
+                    const hs = hslState[ch] || {};
+                    return hs.h !== 0 || hs.s !== 0 || hs.l !== 0;
+                });
+            } else {
+                // Check slider items
+                for (const conf of p.items) {
+                    const val = state[conf.id];
+                    const def = conf.default !== undefined ? conf.default : 0;
+                    if (val !== undefined && parseFloat(val) !== parseFloat(def)) {
+                        isChanged = true;
+                        break;
+                    }
+                }
+                // Check selects / checkboxes
+                if (p.titleText === "Blur") {
+                    if (state.cr_blur_mode !== "Gaussian" && (state.cr_blur_radius !== 0)) isChanged = true;
+                } else if (p.titleText === "Halftone") {
+                    if (state.cr_ht_shape !== "Dot" || state.cr_ht_inverse) isChanged = true;
+                } else if (p.titleText === "Sharpen") {
+                    if (state.cr_lap_kernel !== "8-neighbor") isChanged = true;
+                } else if (p.titleText === "Posterize") {
+                    if (state.cr_post_enable || state.cr_post_mode !== "RGB" || state.cr_post_dither_mode !== "None") isChanged = true;
+                } else if (p.titleText === "Levels") {
+                    if (state.cr_lvl_channel !== "rgb") isChanged = true;
+                }
+            }
+            
+            if (isChanged) {
+                p.header.style.background = "#235a7a"; // Pale blue
+            } else {
+                p.header.style.background = "#2a2a2f"; // Gray
+            }
+        });
+    };
 
     const createAccordionPanel = (titleText, defaultOpen = false) => {
         const wrapper = document.createElement("div");
@@ -1229,6 +2668,8 @@ export function openTrixCameraRawEditor(node) {
         
         wrapper.append(header, body);
         sidebarContent.appendChild(wrapper);
+        const pObj = { wrapper, body, header, titleText, items: [] };
+        panelTrackers.push(pObj);
         return { wrapper, body, header };
     };
 
@@ -1273,8 +2714,7 @@ export function openTrixCameraRawEditor(node) {
                 iEl.value = parsed;
             }
             sEl.value = parsed;
-            state[conf.id] = parsed;
-            if (onChangeCallback) onChangeCallback();
+            state[conf.id] = parsed; if (onChangeCallback) onChangeCallback(); if (typeof updatePanelActiveColoring === 'function') updatePanelActiveColoring();
         };
 
         if (conf.step) {
@@ -1292,6 +2732,8 @@ export function openTrixCameraRawEditor(node) {
 
         row.append(tSpan, sEl, iEl);
         parentBody.appendChild(row);
+        const p = panelTrackers.find(x => x.body === parentBody);
+        if (p) p.items.push(conf);
         return { row, sEl, iEl, updateVals };
     };
 
@@ -1322,18 +2764,16 @@ export function openTrixCameraRawEditor(node) {
         {id: 'cr_tex', label: 'Texture', min:-200, max:200, default:0},
         {id: 'cr_clar', label: 'Clarity', min:-200, max:200, default:0},
         {id: 'cr_dehz', label: 'Dehaze', min:-150, max:150, default:0},
-        {id: 'cr_sharp', label: 'Sharpening', min:0, max:150, default:0},
         {id: 'cr_denoise', label: 'Noise Reduction', min:0, max:150, default:0}
     ].forEach(conf => createSliderRow(conf, detailPanel.body, scheduleRender));
 
     // 4. Effect Panel
     const effectPanel = createAccordionPanel("Effect", false);
     [
-        {id: 'cr_blur', label: 'Gaussian Blur', min:0, max:150, default:0},
-        {id: 'cr_surface_blur', label: 'Surface Blur', min:0, max:200, default:0},
         {id: 'cr_grain', label: 'Grain', min:0, max:150, default:0},
         {id: 'cr_vignette', label: 'Vignette', min:0, max:150, default:0}
     ].forEach(conf => createSliderRow(conf, effectPanel.body, scheduleRender));
+
 
     // 5. Sketch Panel
     const sketchPanel = createAccordionPanel("Sketch", false);
@@ -1397,7 +2837,633 @@ export function openTrixCameraRawEditor(node) {
     pxAlgoRow.append(pxAlgoLabel, pxAlgoSel);
     pixelizePanel.body.appendChild(pxAlgoRow);
 
+    // Helper for small section label inside accordion body
+    const makeSectionLabel = (text, body) => {
+        const lbl = document.createElement("div");
+        lbl.innerText = text;
+        lbl.style.cssText = "color: #888; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; padding: 2px 4px 0 4px; margin-bottom: -4px;";
+        body.appendChild(lbl);
+    };
+
+    // Helper for dropdown row inside accordion
+    const makeSelectRow = (labelText, id, options, initialVal, onChange) => {
+        const row = document.createElement("div");
+        row.style.cssText = "display: flex; align-items: center; justify-content: space-between; padding: 4px; margin-bottom: 2px;";
+        const lbl = document.createElement("span");
+        lbl.innerText = labelText;
+        lbl.style.cssText = "color: #bbb; font-size: 11px; flex: 0 0 95px;";
+        const sel = document.createElement("select");
+        sel.id = id;
+        sel.style.cssText = "flex: 1; background: #111; color: #fff; border: 1px solid #444; padding: 3px 4px; border-radius: 4px; font-size: 11px; outline: none; cursor: pointer;";
+        options.forEach(opt => {
+            const o = document.createElement("option");
+            o.value = opt.value !== undefined ? opt.value : opt;
+            o.innerText = opt.label !== undefined ? opt.label : opt;
+            sel.appendChild(o);
+        });
+        sel.value = initialVal;
+        sel.onchange = (e) => onChange(e.target.value);
+        row.append(lbl, sel);
+        return { row, sel };
+    };
+
+    // Helper for checkbox row inside accordion
+    const makeCheckboxRow = (labelText, id, initialVal, onChange) => {
+        const row = document.createElement("div");
+        row.style.cssText = "display: flex; align-items: center; gap: 8px; padding: 4px; margin-bottom: 2px;";
+        const chk = document.createElement("input");
+        chk.type = "checkbox"; chk.id = id; chk.checked = !!initialVal; chk.style.cursor = "pointer";
+        const lbl = document.createElement("label");
+        lbl.htmlFor = id; lbl.innerText = labelText;
+        lbl.style.cssText = "color: #bbb; font-size: 11px; cursor: pointer;";
+        chk.onchange = (e) => onChange(e.target.checked);
+        row.append(chk, lbl);
+        return { row, chk };
+    };
+
+    // 7. Blur Panel
+    const blurAdvPanel = createAccordionPanel("Blur", false);
+    createSliderRow({id: 'cr_blur_radius', label: 'Radius', min: 0, max: 50, default: 0}, blurAdvPanel.body, scheduleRender);
+    const blurModeRow = makeSelectRow("Mode:", "cr_blur_mode",
+        ["Gaussian", "Average", "Edge Average", "Surface Blur"],
+        state.cr_blur_mode || 'gaussian',
+        (v) => { state.cr_blur_mode = v.toLowerCase(); pushCrHistory(); scheduleRender(); }
+    );
+    blurAdvPanel.body.appendChild(blurModeRow.row);
+
+    // 8. Halftone Panel
+    const halftonePanel = createAccordionPanel("Halftone", false);
+    [
+        {id: 'cr_ht_size', label: 'Size', min: 0, max: 50, default: 0},
+        {id: 'cr_ht_angle', label: 'Angle', min: -180, max: 180, default: 15},
+        {id: 'cr_ht_contrast', label: 'Contrast', min: -100, max: 100, default: 0},
+        {id: 'cr_ht_brightness', label: 'Brightness', min: -100, max: 100, default: 0},
+        {id: 'cr_ht_dither', label: 'Dither', min: 0, max: 100, default: 100}
+    ].forEach(conf => createSliderRow(conf, halftonePanel.body, scheduleRender));
+    const htShapeRow = makeSelectRow("Shape:", "cr_ht_shape",
+        ["Dot", "Square Dot", "Line", "Rhomboid", "Cross Cut", "Saddle", "Random Dots"],
+        state.cr_ht_shape || 'Dot',
+        (v) => { state.cr_ht_shape = v; pushCrHistory(); scheduleRender(); }
+    );
+    halftonePanel.body.appendChild(htShapeRow.row);
+    const htInvRow = makeCheckboxRow("Inverse", "cr_ht_inverse", state.cr_ht_inverse,
+        (v) => { state.cr_ht_inverse = v; pushCrHistory(); scheduleRender(); }
+    );
+    halftonePanel.body.appendChild(htInvRow.row);
+
+    // Halftone Angle Dial
+    const htAngleCanvas = document.createElement("canvas");
+    htAngleCanvas.width = 300; htAngleCanvas.height = 86;
+    htAngleCanvas.style.cssText = "display: block; margin: 4px auto; background: transparent; cursor: pointer;";
+    halftonePanel.body.appendChild(htAngleCanvas);
+
+    drawHtDial = () => {
+        const ctx = htAngleCanvas.getContext("2d");
+        ctx.clearRect(0, 0, 300, 86);
+        const cx = 150, cy = 43, r = 36;
+        
+        // Disc background
+        ctx.fillStyle = '#ccc';
+        ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+        
+        ctx.strokeStyle = '#333';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        
+        // Line indicator
+        const angDeg = state.cr_ht_angle || 0;
+        const ang = angDeg * Math.PI / 180;
+        const tipX = cx + Math.cos(ang) * (r - 2);
+        const tipY = cy + Math.sin(ang) * (r - 2);
+        
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(tipX, tipY);
+        ctx.stroke();
+        
+        // Center dot
+        ctx.fillStyle = '#000';
+        ctx.beginPath(); ctx.arc(cx, cy, 3.5, 0, Math.PI * 2); ctx.fill();
+    };
+
+    let htDialDragging = false;
+    const htPickAngle = (e) => {
+        const rect = htAngleCanvas.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+        const dx = mouseX - 150;
+        const dy = mouseY - 43;
+        if (dx === 0 && dy === 0) return;
+        let angDeg = Math.atan2(dy, dx) * 180 / Math.PI;
+        angDeg = Math.round(angDeg * 10) / 10;
+        state.cr_ht_angle = angDeg;
+        
+        const sEl = document.getElementById("cr_slider_cr_ht_angle");
+        if (sEl) sEl.value = angDeg;
+        const iEl = document.getElementById("cr_input_cr_ht_angle");
+        if (iEl) iEl.value = angDeg;
+        
+        drawHtDial();
+        scheduleRender();
+    };
+
+    htAngleCanvas.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        htDialDragging = true;
+        htPickAngle(e);
+    }, { signal: abortCtrl.signal });
+
+    window.addEventListener("mousemove", (e) => {
+        if (htDialDragging) {
+            e.preventDefault();
+            htPickAngle(e);
+        }
+    }, { signal: abortCtrl.signal });
+
+    window.addEventListener("mouseup", () => {
+        if (htDialDragging) {
+            htDialDragging = false;
+            pushCrHistory();
+        }
+    }, { signal: abortCtrl.signal });
+
+    halftonePanel.header.addEventListener("click", () => { requestAnimationFrame(drawHtDial); });
+
+    // 9. Sharpen Panel
+    const sharpenPanel = createAccordionPanel("Sharpen", false);
+    makeSectionLabel("Unsharp Mask", sharpenPanel.body);
+    [
+        {id: 'cr_usm_amount', label: 'Amount', min: 0, max: 200, default: 0},
+        {id: 'cr_usm_radius', label: 'Radius', min: 1, max: 10, default: 1},
+        {id: 'cr_usm_threshold', label: 'Threshold', min: 0, max: 255, default: 0}
+    ].forEach(conf => createSliderRow(conf, sharpenPanel.body, scheduleRender));
+    makeSectionLabel("Laplacian", sharpenPanel.body);
+    createSliderRow({id: 'cr_lap_amount', label: 'Amount', min: 0.0, max: 1.0, step: 0.01, default: 0}, sharpenPanel.body, scheduleRender);
+    const lapKernelRow = makeSelectRow("Kernel:", "cr_lap_kernel",
+        ["8-neighbor", "4-neighbor"],
+        state.cr_lap_kernel || '8-neighbor',
+        (v) => { state.cr_lap_kernel = v; pushCrHistory(); scheduleRender(); }
+    );
+    sharpenPanel.body.appendChild(lapKernelRow.row);
+
+    // 10. Color Filter Panel
+    const colorFilterPanel = createAccordionPanel("Color Filter", false);
+    // Color Wheel Canvas
+    const cfWheelWrapper = document.createElement("div");
+    cfWheelWrapper.style.cssText = "display: flex; justify-content: center; margin-bottom: 8px; position: relative;";
+    const cfWheel = document.createElement("canvas");
+    cfWheel.id = "cr_cf_wheel";
+    cfWheel.width = 150; cfWheel.height = 150;
+    cfWheel.style.cssText = "border-radius: 50%; cursor: crosshair; border: 2px solid #444; box-sizing: border-box;";
+    cfWheelWrapper.appendChild(cfWheel);
+    colorFilterPanel.body.appendChild(cfWheelWrapper);
+
+    [
+        {id: 'cr_cf_hue', label: 'Hue', min: 0, max: 360, default: 0},
+        {id: 'cr_cf_density', label: 'Density', min: 0, max: 255, default: 0},
+        {id: 'cr_cf_preserve', label: 'Preserve Highl.', min: 0, max: 100, default: 50}
+    ].forEach(conf => createSliderRow(conf, colorFilterPanel.body, () => { drawCfWheel(); scheduleRender(); }));
+
+    drawCfWheel = () => {
+        const wCtx = cfWheel.getContext('2d');
+        const src = getCRColorWheelCanvas();
+        wCtx.clearRect(0, 0, 150, 150);
+        wCtx.drawImage(src, 0, 0, 150, 150);
+        // Draw cursor directly on the wheel canvas
+        const density = state.cr_cf_density || 0;
+        const hue = state.cr_cf_hue || 0;
+        const ang = ((hue - 90 + 360) % 360) * Math.PI / 180;
+        const r = (density / 255) * 73;
+        const cx = 75 + Math.cos(ang) * r;
+        const cy = 75 + Math.sin(ang) * r;
+        
+        wCtx.lineWidth = 2.5; wCtx.strokeStyle = '#000';
+        wCtx.beginPath(); wCtx.arc(cx, cy, 4.5, 0, Math.PI * 2); wCtx.stroke();
+        wCtx.lineWidth = 1.5; wCtx.strokeStyle = '#fff';
+        wCtx.beginPath(); wCtx.arc(cx, cy, 4.5, 0, Math.PI * 2); wCtx.stroke();
+    };
+
+    // Wheel interaction
+    let cfWheelDragging = false;
+    const cfPickFromWheel = (e) => {
+        const rect = cfWheel.getBoundingClientRect();
+        const cx = e.clientX - rect.left - 75;
+        const cy = e.clientY - rect.top - 75;
+        const dist = Math.sqrt(cx * cx + cy * cy);
+        let hue = ((Math.atan2(cy, cx) * 180 / Math.PI) + 90 + 360) % 360;
+        const density = Math.min(255, Math.round((dist / 73) * 255));
+        
+        state.cr_cf_hue = Math.round(hue);
+        state.cr_cf_density = density;
+        
+        // Sync sliders & inputs
+        const hueSlider = document.getElementById("cr_slider_cr_cf_hue");
+        if (hueSlider) hueSlider.value = state.cr_cf_hue;
+        const hueInput = document.getElementById("cr_input_cr_cf_hue");
+        if (hueInput) hueInput.value = state.cr_cf_hue;
+
+        const densitySlider = document.getElementById("cr_slider_cr_cf_density");
+        if (densitySlider) densitySlider.value = state.cr_cf_density;
+        const densityInput = document.getElementById("cr_input_cr_cf_density");
+        if (densityInput) densityInput.value = state.cr_cf_density;
+        
+        drawCfWheel();
+        if (typeof updatePanelActiveColoring === 'function') updatePanelActiveColoring();
+        scheduleRender();
+    };
+    cfWheel.addEventListener("mousedown", (e) => { e.preventDefault(); cfWheelDragging = true; cfPickFromWheel(e); }, { signal: abortCtrl.signal });
+    cfWheel.addEventListener("mousemove", (e) => { if (cfWheelDragging) { e.preventDefault(); cfPickFromWheel(e); } }, { signal: abortCtrl.signal });
+    window.addEventListener("mouseup", () => { if (cfWheelDragging) { cfWheelDragging = false; pushCrHistory(); } }, { signal: abortCtrl.signal });
+
+    colorFilterPanel.header.addEventListener("click", () => { requestAnimationFrame(drawCfWheel); });
+
+    // 11. Posterize Panel
+    const posterizePanel = createAccordionPanel("Posterize", false);
+    const postEnableRow = makeCheckboxRow("Enable Posterize", "cr_post_enable", state.cr_post_enable, (v) => {
+        state.cr_post_enable = v;
+        pushCrHistory();
+        scheduleRender();
+    });
+    posterizePanel.body.appendChild(postEnableRow.row);
+    [
+        {id: 'cr_post_levels', label: 'Levels', min: 2, max: 32, default: 4},
+        {id: 'cr_post_dither', label: 'Dither', min: 0, max: 100, default: 0}
+    ].forEach(conf => createSliderRow(conf, posterizePanel.body, scheduleRender));
+    const postModeRow = makeSelectRow("Mode:", "cr_post_mode",
+        ["RGB", "Luminance"],
+        state.cr_post_mode || 'RGB',
+        (v) => { state.cr_post_mode = v; pushCrHistory(); scheduleRender(); }
+    );
+    posterizePanel.body.appendChild(postModeRow.row);
+    const postDitherRow = makeSelectRow("Dither Mode:", "cr_post_dither_mode",
+        ["None", "Bayer", "Random", "Floyd-Steinberg", "Atkinson"],
+        state.cr_post_dither_mode || 'None',
+        (v) => { state.cr_post_dither_mode = v; pushCrHistory(); scheduleRender(); }
+    );
+    posterizePanel.body.appendChild(postDitherRow.row);
+
+    // 12. Levels Panel
+    const levelsPanel = createAccordionPanel("Levels", false);
+    const lvlChannelRow = makeSelectRow("Channel:", "cr_lvl_channel",
+        [{value: 'rgb', label: 'RGB'}, {value: 'r', label: 'Red'}, {value: 'g', label: 'Green'}, {value: 'b', label: 'Blue'}],
+        state.cr_lvl_channel || 'rgb',
+        (v) => { state.cr_lvl_channel = v; if (typeof drawLevelsBar === "function") drawLevelsBar(); pushCrHistory(); scheduleRender(); }
+    );
+    levelsPanel.body.appendChild(lvlChannelRow.row);
+
+    // Visual levels bar (Canvas with real-time histogram and interactive draggable handles)
+    const lvlBarWrapper = document.createElement("div");
+    lvlBarWrapper.style.cssText = "margin: 4px 0 8px 0; user-select: none; display: flex; flex-direction: column; align-items: center;";
+    const lvlCanvas = document.createElement("canvas");
+    lvlCanvas.width = 276; lvlCanvas.height = 120;
+    lvlCanvas.style.cssText = "background: #111; border-radius: 4px; border: 1px solid #333; cursor: pointer; display: block; width: 276px; height: 120px;";
+    lvlBarWrapper.appendChild(lvlCanvas);
+    levelsPanel.body.appendChild(lvlBarWrapper);
+
+    const computeHistogram = (channel) => {
+        const hist = new Uint32Array(256);
+        if (!baseImgData) return hist;
+        const len = baseImgData.length;
+        const chIdx = channel === 'r' ? 0 : (channel === 'g' ? 1 : (channel === 'b' ? 2 : -1));
+        
+        if (chIdx >= 0) {
+            for (let i = 0; i < len; i += 4) {
+                const val = baseImgData[i + chIdx];
+                hist[val]++;
+            }
+        } else {
+            // RGB
+            for (let i = 0; i < len; i += 4) {
+                const val = Math.round(baseImgData[i]*0.299 + baseImgData[i+1]*0.587 + baseImgData[i+2]*0.114);
+                hist[val]++;
+            }
+        }
+        return hist;
+    };
+
+    const getLvlHandlePositions = () => {
+        const inB = state.cr_lvl_in_black || 0;
+        const inW = state.cr_lvl_in_white !== undefined ? state.cr_lvl_in_white : 255;
+        const gam = state.cr_lvl_gamma !== undefined ? state.cr_lvl_gamma : 1.0;
+        const outB = state.cr_lvl_out_black || 0;
+        const outW = state.cr_lvl_out_white !== undefined ? state.cr_lvl_out_white : 255;
+        
+        const inBlackX = 10 + (inB / 255) * 256;
+        const inWhiteX = 10 + (inW / 255) * 256;
+        const gRel = 0.5 - Math.log10(Math.max(0.01, Math.min(99.99, gam))) / 2;
+        const gammaX = inBlackX + Math.max(0, Math.min(1, gRel)) * (inWhiteX - inBlackX);
+        const outBlackX = 10 + (outB / 255) * 256;
+        const outWhiteX = 10 + (outW / 255) * 256;
+        
+        return { inB, inW, gam, outB, outW, inBlackX, inWhiteX, gammaX, outBlackX, outWhiteX };
+    };
+
+    const drawHandle = (ctx, x, y, fill, stroke) => {
+        ctx.beginPath();
+        ctx.moveTo(x, y - 6);
+        ctx.lineTo(x - 5, y + 4);
+        ctx.lineTo(x + 5, y + 4);
+        ctx.closePath();
+        ctx.fillStyle = fill;
+        ctx.fill();
+        ctx.strokeStyle = stroke;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+    };
+
+    drawLevelsBar = () => {
+        const lCtx = lvlCanvas.getContext("2d");
+        lCtx.clearRect(0, 0, 276, 120);
+        
+        // 1. Draw Histogram
+        lCtx.fillStyle = '#1a1a1a';
+        lCtx.fillRect(10, 5, 256, 60);
+        lCtx.strokeStyle = 'rgba(255,255,255,0.12)';
+        lCtx.strokeRect(10, 5, 256, 60);
+        
+        const channel = state.cr_lvl_channel || 'rgb';
+        const hist = computeHistogram(channel);
+        let maxV = 0;
+        for (let i = 0; i < 256; i++) {
+            if (hist[i] > maxV) maxV = hist[i];
+        }
+        if (maxV > 0) {
+            lCtx.fillStyle = channel === 'r' ? 'rgba(220,80,80,0.85)' :
+                            channel === 'g' ? 'rgba(80,220,80,0.85)' :
+                            channel === 'b' ? 'rgba(80,140,255,0.85)' :
+                            'rgba(180,180,180,0.85)';
+            for (let i = 0; i < 256; i++) {
+                const bh = Math.round((hist[i] / maxV) * 58);
+                if (bh > 0) {
+                    lCtx.fillRect(10 + i, 65 - bh, 1, bh);
+                }
+            }
+        }
+        
+        // 2. Input gradient bar
+        const gradIn = lCtx.createLinearGradient(10, 70, 266, 70);
+        gradIn.addColorStop(0, '#000'); gradIn.addColorStop(1, '#fff');
+        lCtx.fillStyle = gradIn;
+        lCtx.fillRect(10, 70, 256, 8);
+        
+        const pos = getLvlHandlePositions();
+        drawHandle(lCtx, pos.inBlackX, 84, '#000', '#fff');
+        drawHandle(lCtx, pos.gammaX,   84, '#808080', '#fff');
+        drawHandle(lCtx, pos.inWhiteX, 84, '#fff', '#000');
+        
+        // 3. Output gradient bar
+        const gradOut = lCtx.createLinearGradient(10, 92, 266, 92);
+        gradOut.addColorStop(0, '#000'); gradOut.addColorStop(1, '#fff');
+        lCtx.fillStyle = gradOut;
+        lCtx.fillRect(10, 92, 256, 8);
+        
+        drawHandle(lCtx, pos.outBlackX, 106, '#000', '#fff');
+        drawHandle(lCtx, pos.outWhiteX, 106, '#fff', '#000');
+    };
+
+    let activeLvlHandle = null;
+    const hitTestLvlHandle = (mx, my) => {
+        const pos = getLvlHandlePositions();
+        const tol = 10;
+        
+        // Check Output handles (around y=106)
+        if (Math.abs(my - 106) < 12) {
+            const dB = Math.abs(mx - pos.outBlackX);
+            const dW = Math.abs(mx - pos.outWhiteX);
+            if (Math.min(dB, dW) < tol) {
+                return dB < dW ? 'out_black' : 'out_white';
+            }
+        }
+        // Check Input handles (around y=84)
+        if (Math.abs(my - 84) < 12 || (my > 68 && my < 90)) {
+            const dB = Math.abs(mx - pos.inBlackX);
+            const dG = Math.abs(mx - pos.gammaX);
+            const dW = Math.abs(mx - pos.inWhiteX);
+            const min = Math.min(dB, dG, dW);
+            if (min < tol) {
+                if (min === dB) return 'in_black';
+                if (min === dW) return 'in_white';
+                return 'in_gamma';
+            }
+        }
+        return null;
+    };
+
+    const dragLvlHandle = (e) => {
+        if (!activeLvlHandle) return;
+        const rect = lvlCanvas.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const xNorm = Math.max(0, Math.min(1, (mx - 10) / 256));
+        const value = Math.round(xNorm * 255);
+        
+        const inB = state.cr_lvl_in_black || 0;
+        const inW = state.cr_lvl_in_white !== undefined ? state.cr_lvl_in_white : 255;
+        const outB = state.cr_lvl_out_black || 0;
+        const outW = state.cr_lvl_out_white !== undefined ? state.cr_lvl_out_white : 255;
+        
+        if (activeLvlHandle === 'in_black') {
+            state.cr_lvl_in_black = Math.max(0, Math.min(inW - 1, value));
+        } else if (activeLvlHandle === 'in_white') {
+            state.cr_lvl_in_white = Math.max(inB + 1, Math.min(255, value));
+        } else if (activeLvlHandle === 'in_gamma') {
+            const range = Math.max(1, inW - inB);
+            const rel = Math.max(0.01, Math.min(0.99, (value - inB) / range));
+            const gamma = Math.pow(10, (0.5 - rel) * 2);
+            state.cr_lvl_gamma = Math.round(gamma * 100) / 100;
+        } else if (activeLvlHandle === 'out_black') {
+            state.cr_lvl_out_black = Math.max(0, Math.min(outW - 1, value));
+        } else if (activeLvlHandle === 'out_white') {
+            state.cr_lvl_out_white = Math.max(outB + 1, Math.min(255, value));
+        }
+        
+        // Sync sliders & inputs
+        for (const k of ['cr_lvl_in_black', 'cr_lvl_in_white', 'cr_lvl_gamma', 'cr_lvl_out_black', 'cr_lvl_out_white']) {
+            const slider = document.getElementById('cr_slider_' + k);
+            if (slider) slider.value = state[k];
+            const input = document.getElementById('cr_input_' + k);
+            if (input) input.value = state[k];
+        }
+        
+        drawLevelsBar();
+        if (typeof updatePanelActiveColoring === 'function') updatePanelActiveColoring();
+        scheduleRender();
+    };
+
+    lvlCanvas.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        const rect = lvlCanvas.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const my = e.clientY - rect.top;
+        const handle = hitTestLvlHandle(mx, my);
+        if (handle) {
+            activeLvlHandle = handle;
+            dragLvlHandle(e);
+        }
+    }, { signal: abortCtrl.signal });
+
+    window.addEventListener("mousemove", (e) => {
+        if (activeLvlHandle) {
+            e.preventDefault();
+            dragLvlHandle(e);
+        }
+    }, { signal: abortCtrl.signal });
+
+    window.addEventListener("mouseup", () => {
+        if (activeLvlHandle) {
+            activeLvlHandle = null;
+            pushCrHistory();
+        }
+    }, { signal: abortCtrl.signal });
+
+    levelsPanel.header.addEventListener("click", () => requestAnimationFrame(drawLevelsBar));
+    [
+        {id: 'cr_lvl_in_black', label: 'In Black', min: 0, max: 254, default: 0},
+        {id: 'cr_lvl_in_white', label: 'In White', min: 1, max: 255, default: 255},
+        {id: 'cr_lvl_gamma', label: 'Gamma', min: 0.1, max: 10.0, step: 0.01, default: 1.0},
+        {id: 'cr_lvl_out_black', label: 'Out Black', min: 0, max: 254, default: 0},
+        {id: 'cr_lvl_out_white', label: 'Out White', min: 1, max: 255, default: 255}
+    ].forEach(conf => {
+        createSliderRow(conf, levelsPanel.body, () => { drawLevelsBar(); scheduleRender(); });
+    });
+
+    // 13. Color Balance Panel
+    const colorBalancePanel = createAccordionPanel("Color Balance", false);
+    
+    // Canvas Container for three wheels
+    const cbCanvasWrapper = document.createElement("div");
+    cbCanvasWrapper.style.cssText = "display: flex; justify-content: center; margin-bottom: 8px; position: relative;";
+    const cbCanvas = document.createElement("canvas");
+    cbCanvas.width = 300; cbCanvas.height = 110;
+    cbCanvas.style.cssText = "background: #111; border-radius: 6px; border: 1px solid #333; cursor: crosshair;";
+    cbCanvasWrapper.appendChild(cbCanvas);
+    colorBalancePanel.body.appendChild(cbCanvasWrapper);
+
+    drawCbWheels = () => {
+        const ctx = cbCanvas.getContext("2d");
+        ctx.clearRect(0, 0, 300, 110);
+        
+        const disc = getCbDiscCanvas();
+        const rMax = 38;
+        const cy = 65;
+        const centers = [50, 150, 250];
+        const labels = ["Shadows", "Midtones", "Highlights"];
+        const prefixes = ["shad", "mid", "high"];
+        
+        for (let i = 0; i < 3; i++) {
+            const cx = centers[i];
+            // Label
+            ctx.fillStyle = '#cfcfcf';
+            ctx.font = 'bold 10px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(labels[i], cx, 18);
+            
+            // Disc
+            ctx.drawImage(disc, cx - rMax, cy - rMax, rMax * 2, rMax * 2);
+            
+            // Indicator ring
+            const r = state[`cr_cb_${prefixes[i]}_r`] || 0;
+            const g = state[`cr_cb_${prefixes[i]}_g`] || 0;
+            const b = state[`cr_cb_${prefixes[i]}_b`] || 0;
+            
+            const pos = cbShiftsToPos(r, g, b);
+            const ang = pos.hue * Math.PI * 2;
+            const rr = pos.distance * rMax;
+            const cxp = cx + Math.sin(ang) * rr;
+            const cyp = cy - Math.cos(ang) * rr;
+            
+            ctx.lineWidth = 2.5; ctx.strokeStyle = '#000';
+            ctx.beginPath(); ctx.arc(cxp, cyp, 4.5, 0, Math.PI * 2); ctx.stroke();
+            ctx.lineWidth = 1.5; ctx.strokeStyle = '#fff';
+            ctx.beginPath(); ctx.arc(cxp, cyp, 4.5, 0, Math.PI * 2); ctx.stroke();
+        }
+    };
+
+    let activeCbWheelIdx = -1;
+    const updateCbWheelValue = (mouseX, mouseY) => {
+        if (activeCbWheelIdx < 0 || activeCbWheelIdx > 2) return;
+        const cy = 65;
+        const rMax = 38;
+        const centers = [50, 150, 250];
+        const prefixes = ["shad", "mid", "high"];
+        const prefix = `cr_cb_${prefixes[activeCbWheelIdx]}_`;
+        
+        const cx = centers[activeCbWheelIdx];
+        const dx = mouseX - cx;
+        const dy = mouseY - cy;
+        const dist = Math.min(rMax, Math.sqrt(dx*dx + dy*dy));
+        const distance = rMax > 0 ? dist / rMax : 0;
+        
+        let hue = Math.atan2(dx, -dy) / (Math.PI * 2);
+        if (hue < 0) hue += 1;
+        
+        const h6 = hue * 6;
+        const ii = Math.floor(h6);
+        const f = h6 - ii;
+        const p = 0;
+        const q = 1 - f;
+        const t = f;
+        let r, g, b;
+        switch (((ii % 6) + 6) % 6) {
+            case 0: r = 1; g = t; b = p; break;
+            case 1: r = q; g = 1; b = p; break;
+            case 2: r = p; g = 1; b = t; break;
+            case 3: r = p; g = q; b = 1; break;
+            case 4: r = t; g = p; b = 1; break;
+            default: r = 1; g = p; b = q;
+        }
+        
+        state[prefix + 'r'] = Math.round((r - 0.5) * 2 * 100 * distance);
+        state[prefix + 'g'] = Math.round((g - 0.5) * 2 * 100 * distance);
+        state[prefix + 'b'] = Math.round((b - 0.5) * 2 * 100 * distance);
+        
+        drawCbWheels();
+        if (typeof updatePanelActiveColoring === 'function') updatePanelActiveColoring();
+        scheduleRender();
+    };
+
+    cbCanvas.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        const rect = cbCanvas.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+        const cy = 65;
+        const rMax = 38;
+        const centers = [50, 150, 250];
+        
+        for (let i = 0; i < 3; i++) {
+            const dx = mouseX - centers[i];
+            const dy = mouseY - cy;
+            if (dx*dx + dy*dy <= (rMax + 5) * (rMax + 5)) {
+                activeCbWheelIdx = i;
+                updateCbWheelValue(mouseX, mouseY);
+                break;
+            }
+        }
+    }, { signal: abortCtrl.signal });
+
+    window.addEventListener("mousemove", (e) => {
+        if (activeCbWheelIdx >= 0) {
+            e.preventDefault();
+            const rect = cbCanvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            updateCbWheelValue(mouseX, mouseY);
+        }
+    }, { signal: abortCtrl.signal });
+
+    window.addEventListener("mouseup", () => {
+        if (activeCbWheelIdx >= 0) {
+            activeCbWheelIdx = -1;
+            pushCrHistory();
+        }
+    }, { signal: abortCtrl.signal });
+
+    colorBalancePanel.header.addEventListener("click", () => { requestAnimationFrame(drawCbWheels); });
+
     // --- HUE/SATURATION PANEL ---
+
 
     const hslWrapper = document.createElement("div");
     hslWrapper.style.cssText = "border: 1px solid #444; border-radius: 4px; background: #1a1a1a; overflow: visible; margin-bottom: 12px;";
@@ -1530,7 +3596,7 @@ export function openTrixCameraRawEditor(node) {
     gradContainer.append(gradBase, gradShift);
     hslBody.appendChild(gradContainer);
 
-    const sWidth = createHslSlider('width', 'Spread:', 10, 220, 60);
+    const sWidth = createHslSlider('width', 'Spread:', 10, 300, 60);
     sWidth.row.style.marginTop = "8px";
     hslBody.appendChild(sWidth.row);
 
@@ -1573,6 +3639,7 @@ export function openTrixCameraRawEditor(node) {
         fingerBtn.style.background = hslFingerActive ? "rgb(246, 103, 68)" : "#222";
         fingerBtn.style.color = hslFingerActive ? "#fff" : "#aaa";
         updateGradientBars();
+        if (typeof updatePanelActiveColoring === 'function') updatePanelActiveColoring();
     };
 
     channelSelect.onchange = (e) => {
@@ -1750,8 +3817,12 @@ export function openTrixCameraRawEditor(node) {
 
     const updateCurvesUI = () => {
         curvesState = ensureCurveState(curvesState);
+        if (layers && layers[selectedLayerIndex]) {
+            layers[selectedLayerIndex].curvesState = curvesState;
+        }
         curveChannelSelect.value = curvesState.activeChannel;
         drawCurvesUI();
+        if (typeof updatePanelActiveColoring === 'function') updatePanelActiveColoring();
     };
 
     curveChannelSelect.onchange = (e) => {
@@ -1852,15 +3923,21 @@ export function openTrixCameraRawEditor(node) {
     // --- END CURVES PANEL ---
 
     resetCrBtn.onclick = () => {
-        for (const key in state) { state[key] = 0; }
-        hslState = {
+        const dState = JSON.parse(JSON.stringify(defaultCrState));
+        for (const key in dState) {
+            state[key] = dState[key];
+        }
+        layers[selectedLayerIndex].hslState = {
             colorize: false, activeChannel: 'master', 
             master: { h: 0, s: 0, l: 0 }, reds: { h: 0, s: 0, l: 0, center: 0, width: 60 },
             yellows: { h: 0, s: 0, l: 0, center: 60, width: 60 }, greens: { h: 0, s: 0, l: 0, center: 120, width: 60 },
             cyans: { h: 0, s: 0, l: 0, center: 180, width: 60 }, blues: { h: 0, s: 0, l: 0, center: 240, width: 60 },
             magentas: { h: 0, s: 0, l: 0, center: 300, width: 60 }
         };
-        curvesState = createDefaultCurveState();
+        layers[selectedLayerIndex].curvesState = createDefaultCurveState();
+        hslState = layers[selectedLayerIndex].hslState;
+        curvesState = layers[selectedLayerIndex].curvesState;
+        renderLayersList();
         hslFingerActive = false;
         fingerBtn.style.background = "#222";
         fingerBtn.style.color = "#aaa";
@@ -1869,11 +3946,7 @@ export function openTrixCameraRawEditor(node) {
         curvesFingerBtn.style.color = "#aaa";
         updateHslUI();
         updateCurvesUI();
-        for (const key in state) {
-            const iEl = document.getElementById(`cr_input_${key}`);
-            const sEl = document.getElementById(`cr_slider_${key}`);
-            if (iEl) iEl.value = 0; if (sEl) sEl.value = 0;
-        }
+        updateRightPanelUI();
         pushCrHistory();
         scheduleRender();
     };
@@ -1896,15 +3969,69 @@ export function openTrixCameraRawEditor(node) {
     saveDiskBtn.onmouseenter = () => { saveDiskBtn.style.background = "#333a45"; };
     saveDiskBtn.onmouseleave = () => { saveDiskBtn.style.background = "#2a2a2f"; };
 
+    const bakeLayers = (hqW, hqH, parentFilterStr, scaleRatio) => {
+        const mainCvs = document.createElement("canvas");
+        mainCvs.width = hqW; mainCvs.height = hqH;
+        const mainCtx = mainCvs.getContext("2d", { willReadFrequently: true });
+        
+        // Create base image source canvas (with parent filter)
+        const baseCvs = document.createElement("canvas");
+        baseCvs.width = hqW; baseCvs.height = hqH;
+        const baseCtx = baseCvs.getContext("2d");
+        baseCtx.filter = parentFilterStr || "none";
+        baseCtx.drawImage(origImgObj, 0, 0, hqW, hqH);
+        baseCtx.filter = "none";
+        const baseData = baseCtx.getImageData(0, 0, hqW, hqH).data;
+
+        // In filter mode, draw base image initially
+        if (layersMode === "filter") {
+            mainCtx.drawImage(baseCvs, 0, 0);
+        }
+        
+        // Offscreen layer canvas
+        const layerCvs = document.createElement("canvas");
+        layerCvs.width = hqW; layerCvs.height = hqH;
+        const layerCtx = layerCvs.getContext("2d", { willReadFrequently: true });
+        
+        let firstVisible = true;
+        for (let i = 0; i < layers.length; i++) {
+            const layer = layers[i];
+            if (!layer.visible) continue;
+            
+            layerCtx.clearRect(0, 0, hqW, hqH);
+            
+            let inputData;
+            if (layersMode === "filter") {
+                inputData = mainCtx.getImageData(0, 0, hqW, hqH).data;
+            } else {
+                inputData = baseData;
+            }
+            
+            const imgData = new ImageData(hqW, hqH);
+            processPixels(inputData, imgData.data, hqW, hqH, layer.state, layer.hslState, layer.curvesState);
+            layerCtx.putImageData(imgData, 0, 0);
+            applySpatialStages(layerCtx, hqW, hqH, layer.state, scaleRatio);
+            
+            mainCtx.globalAlpha = layer.opacity / 100;
+            if (firstVisible && layersMode === "image") {
+                mainCtx.globalCompositeOperation = "source-over";
+                firstVisible = false;
+            } else {
+                mainCtx.globalCompositeOperation = layer.blendMode || "source-over";
+            }
+            mainCtx.drawImage(layerCvs, 0, 0);
+        }
+        mainCtx.globalAlpha = 1.0;
+        mainCtx.globalCompositeOperation = "source-over";
+        
+        return mainCvs;
+    };
+
     saveDiskBtn.onclick = () => {
         saveDiskBtn.innerText = "Processing...";
         setTimeout(() => {
             const hqW = origImgObj.naturalWidth;
             const hqH = origImgObj.naturalHeight;
-            
-            const tCvs = document.createElement("canvas");
-            tCvs.width = hqW; tCvs.height = hqH;
-            const tCtx = tCvs.getContext("2d", { willReadFrequently: true });
             
             let parentFilterStr = "";
             if (node.inputs) {
@@ -1925,22 +4052,10 @@ export function openTrixCameraRawEditor(node) {
                 }
             }
 
-            tCtx.filter = parentFilterStr || "none";
-            tCtx.drawImage(origImgObj, 0, 0, hqW, hqH);
-            tCtx.filter = "none";
-            
-            const srcImgData = tCtx.getImageData(0, 0, hqW, hqH);
-            const outImgData = tCtx.createImageData(hqW, hqH);
-            
-            processPixels(srcImgData.data, outImgData.data, hqW, hqH, state, hslState, curvesState);
-            tCtx.putImageData(outImgData, 0, 0);
-            
-            const blur = state.cr_blur;
             const scaleRatio = hqW / pW; 
+            const bakedCvs = bakeLayers(hqW, hqH, parentFilterStr, scaleRatio);
 
-            applySpatialStages(tCtx, hqW, hqH, state, scaleRatio);
-
-            tCvs.toBlob(async (blob) => {
+            bakedCvs.toBlob(async (blob) => {
                 if (!blob) { console.error("Failed to create blob for saving"); return; }
                 const filename = `trix_camera_raw_HQ_${Date.now()}.png`;
                 
@@ -2021,6 +4136,10 @@ export function openTrixCameraRawEditor(node) {
         if (wCurveData) wCurveData.value = JSON.stringify(ensureCurveState(curvesState));
         if (wCurveActive) wCurveActive.value = curveHasAdjustments(curvesState);
 
+        if (!node.properties) node.properties = {};
+        node.properties.trix_layers = JSON.stringify(layers);
+        node.properties.trix_layers_mode = layersMode;
+
         if (node.syncHTMLRef) node.syncHTMLRef();
         if (node.updateUIRef) node.updateUIRef();
         if (app.graph) app.graph.setDirtyCanvas(true, true);
@@ -2032,7 +4151,7 @@ export function openTrixCameraRawEditor(node) {
         saveToNodeBtn.innerText = "Saving...";
         
         setTimeout(() => {
-            const imgWidget = node.widgets ? node.widgets.find(w => w.name === "image") : null;
+            const imgWidget = node.widgets ? node.widgets.find(w => w && (w.name === "image" || w.name === "image_path")) : null;
             let nextVersion = (node._trix_image_version || 0) + 1;
             if (imgWidget && imgWidget.value) {
                 const match = imgWidget.value.match(/_(\d+)\.[a-zA-Z0-9]+$/);
@@ -2046,10 +4165,6 @@ export function openTrixCameraRawEditor(node) {
             const filename = trixCropFilename(node.id, nextVersion);
             const hqW = origImgObj.naturalWidth;
             const hqH = origImgObj.naturalHeight;
-            
-            const tCvs = document.createElement("canvas");
-            tCvs.width = hqW; tCvs.height = hqH;
-            const tCtx = tCvs.getContext("2d", { willReadFrequently: true });
             
             let parentFilterStr = "";
             if (node.inputs) {
@@ -2070,123 +4185,133 @@ export function openTrixCameraRawEditor(node) {
                 }
             }
 
-            tCtx.filter = parentFilterStr || "none";
-            tCtx.drawImage(origImgObj, 0, 0, hqW, hqH);
-            tCtx.filter = "none";
+            const scaleRatio = hqW / pW;
+            const bakedCvs = bakeLayers(hqW, hqH, parentFilterStr, scaleRatio);
             
-            const srcImgData = tCtx.getImageData(0, 0, hqW, hqH);
-            const outImgData = tCtx.createImageData(hqW, hqH);
+            // Create the mask canvas (grayscale)
+            const mCvs = document.createElement("canvas");
+            mCvs.width = hqW;
+            mCvs.height = hqH;
+            const mCtx = mCvs.getContext("2d");
+            mCtx.fillStyle = "black";
+            mCtx.fillRect(0, 0, hqW, hqH);
             
-            processPixels(srcImgData.data, outImgData.data, hqW, hqH, state, hslState, curvesState);
-            tCtx.putImageData(outImgData, 0, 0);
-            
-            const blur = state.cr_blur;
-            const scaleRatio = hqW / pW; 
+            if (savedMaskCanvas) {
+                mCtx.drawImage(savedMaskCanvas, 0, 0, hqW, hqH);
+            }
 
-            applySpatialStages(tCtx, hqW, hqH, state, scaleRatio);
-
-            tCvs.toBlob(async (blob) => {
-                if (!blob) {
-                    console.error("Failed to create blob for saving");
+            bakedCvs.toBlob((imgBlob) => {
+                if (!imgBlob) {
+                    console.error("Failed to create image blob");
                     saveToNodeBtn.disabled = false;
                     saveToNodeBtn.innerText = "Save to Node";
                     return;
                 }
-                
-                try {
-                    const file = new File([blob], filename, { type: "image/png" });
-                    const body = new FormData();
-                    body.append("image", file, filename);
-                    body.append("filename", filename);
-                    body.append("type", "input");
-                    const isAio = node && (node.comfyClass === "TrixLoadImageAIO" || node.type === "TrixLoadImageAIO");
-                    body.append("subfolder", isAio ? TRIX_AIO_SUBFOLDER : "");
-                    body.append("overwrite", "true");
-                    const saveEveryStep = typeof app !== "undefined" && app.ui && app.ui.settings && app.ui.settings.getSettingValue("Trix AIO Tools.Save Steps.SaveEveryStep", false);
-                    const saveEveryStepPath = typeof app !== "undefined" && app.ui && app.ui.settings && app.ui.settings.getSettingValue("Trix AIO Tools.Save Steps.SaveEveryStepPath", "input/aio_input");
-                    body.append("save_every_step", saveEveryStep ? "true" : "false");
-                    body.append("save_every_step_path", saveEveryStepPath);
-                    
-                    const uploadResp = await fetch("/trix/save_image_with_mask", { method: "POST", body: body });
-                    if (uploadResp.status === 200) {
-                        const uploadData = await uploadResp.json();
-                        const fullPath = uploadData.subfolder ? `${uploadData.subfolder}/${uploadData.name}` : uploadData.name;
-                        
-                        node._trix_image_version = nextVersion;
-                        const imgWidget = node.widgets.find(w => w.name === "image");
-                        if (imgWidget) {
-                            node._isChangingImage = true;
-                            if (imgWidget.options && Array.isArray(imgWidget.options.values) && !imgWidget.options.values.includes(fullPath)) {
-                                imgWidget.options.values.unshift(fullPath);
-                            }
-                            imgWidget.value = fullPath;
-                            if (imgWidget.callback) imgWidget.callback(fullPath);
-                        }
+                mCvs.toBlob(async (maskBlob) => {
+                    if (!maskBlob) {
+                        console.error("Failed to create mask blob");
+                        saveToNodeBtn.disabled = false;
+                        saveToNodeBtn.innerText = "Save to Node";
+                        return;
+                    }
+                    try {
+                        const imgFile = new File([imgBlob], filename, { type: "image/png" });
+                        const maskFile = new File([maskBlob], "mask.png", { type: "image/png" });
+                        const body = new FormData();
+                        body.append("image", imgFile, filename);
+                        body.append("mask", maskFile, "mask.png");
+                        body.append("filename", filename);
+                        body.append("type", "input");
+                        const isAio = node && (node.comfyClass === "TrixLoadImageAIO" || node.type === "TrixLoadImageAIO");
+                        body.append("subfolder", isAio ? TRIX_AIO_SUBFOLDER : "");
+                        body.append("overwrite", "true");
+                        const saveEveryStep = typeof app !== "undefined" && app.ui && app.ui.settings && app.ui.settings.getSettingValue("Trix AIO Tools.Save Steps.SaveEveryStep", false);
+                        const saveEveryStepPath = typeof app !== "undefined" && app.ui && app.ui.settings && app.ui.settings.getSettingValue("Trix AIO Tools.Save Steps.SaveEveryStepPath", "input/aio_input");
+                        body.append("save_every_step", saveEveryStep ? "true" : "false");
+                        body.append("save_every_step_path", saveEveryStepPath);
 
-                        // Reset all Camera Raw settings on the node since they are now baked into the image
-                        for (const key in state) {
-                            const w = getW(key);
-                            if (w) {
-                                if (key === "cr_pixel_algo") {
-                                    w.value = "kmeans";
-                                } else if (key === "cr_sketch_color") {
-                                    w.value = "gray";
-                                } else {
-                                    w.value = 0;
+                        const uploadResp = await fetch("/trix/save_image_with_mask", { method: "POST", body: body });
+                        if (uploadResp.status === 200) {
+                            const uploadData = await uploadResp.json();
+                            const fullPath = uploadData.subfolder ? `${uploadData.subfolder}/${uploadData.name}` : uploadData.name;
+                            
+                            node._trix_image_version = nextVersion;
+                            const imgWidget = node.widgets ? node.widgets.find(w => w && (w.name === "image" || w.name === "image_path")) : null;
+                            if (imgWidget) {
+                                node._isChangingImage = true;
+                                if (imgWidget.options && Array.isArray(imgWidget.options.values) && !imgWidget.options.values.includes(fullPath)) {
+                                    imgWidget.options.values.unshift(fullPath);
+                                }
+                                imgWidget.value = fullPath;
+                                if (imgWidget.callback) imgWidget.callback(fullPath);
+                            }
+
+                            if (!node.properties) node.properties = {};
+                            
+                            
+                            for (const key in defaultCrState) {
+                                const w = getW(key);
+                                if (w) {
+                                    if (typeof defaultCrState[key] === 'boolean') {
+                                        w.value = false;
+                                    } else {
+                                        w.value = defaultCrState[key];
+                                    }
                                 }
                             }
+                            const crE = getW("cr_enable");
+                            if (crE) crE.value = false;
+                            if (node._checkboxCREnable) node._checkboxCREnable.checked = false;
+
+                            const wHslData = getW("hsl_data");
+                            const wHslActive = getW("hsl_active");
+                            if (wHslData) wHslData.value = JSON.stringify(defaultHslState);
+                            if (wHslActive) wHslActive.value = false;
+
+                            const wCurveData = getW("curve_data");
+                            const wCurveActive = getW("curve_active");
+                            if (wCurveData) wCurveData.value = JSON.stringify(defaultCurvesState);
+                            if (wCurveActive) wCurveActive.value = false;
+
+
+                            const modeWidget = getW("mode");
+                            if (modeWidget) modeWidget.value = "Filter";
+                            node._showCameraRawMenu = false; 
+
+                            if (node.syncHTMLRef) node.syncHTMLRef();
+                            if (node.updateUIRef) node.updateUIRef();
+                            if (app.graph) app.graph.setDirtyCanvas(true, true);
+                            closeEditor();
+
+                            setTimeout(() => {
+                                if (app.graph) {
+                                    app.graph._nodes.forEach(n => {
+                                        if (typeof n.pullLivePreviewRef === "function") {
+                                            n.pullLivePreviewRef();
+                                        }
+                                    });
+                                }
+                            }, 150);
+                        } else {
+                            throw new Error(`Upload failed: ${uploadResp.status}`);
                         }
-                        const crE = getW("cr_enable");
-                        if (crE) crE.value = false;
-                        if (node._checkboxCREnable) node._checkboxCREnable.checked = false;
-                        
-                        const wHslData = getW("hsl_data");
-                        const wHslActive = getW("hsl_active");
-                        if (wHslData) wHslData.value = "{}";
-                        if (wHslActive) wHslActive.value = false;
-                        
-                        const wCurveData = getW("curve_data");
-                        const wCurveActive = getW("curve_active");
-                        if (wCurveData) wCurveData.value = "{}";
-                        if (wCurveActive) wCurveActive.value = false;
-
-                        const modeWidget = getW("mode");
-                        if (modeWidget) modeWidget.value = "Filter";
-                        node._showCameraRawMenu = false; 
-
-                        if (node.syncHTMLRef) node.syncHTMLRef();
-                        if (node.updateUIRef) node.updateUIRef();
-                        if (app.graph) app.graph.setDirtyCanvas(true, true);
-                        closeEditor();
-
-                        // Notify downstream nodes to pull the updated preview/image in real-time
-                        setTimeout(() => {
-                            if (app.graph) {
-                                app.graph._nodes.forEach(n => {
-                                    if (typeof n.pullLivePreviewRef === "function") {
-                                        n.pullLivePreviewRef();
-                                    }
-                                });
-                            }
-                        }, 150);
-                    } else {
-                        throw new Error(`Upload failed: ${uploadResp.status}`);
+                    } catch (e) {
+                        console.error("Save to Node upload failed", e);
+                        alert("Failed to save image to node: " + e);
+                        saveToNodeBtn.disabled = false;
+                        saveToNodeBtn.innerText = "Save to Node";
                     }
-                } catch (e) {
-                    console.error("Save to Node upload failed", e);
-                    alert("Failed to save image to node: " + e);
-                    saveToNodeBtn.disabled = false;
-                    saveToNodeBtn.innerText = "Save to Node";
-                }
+                }, "image/png");
             }, "image/png");
         }, 50);
     };
 
     actionsWrapper.append(cancelBtn, btnRow);
-    btnRow.append(saveDiskBtn, saveSettingsBtn, saveToNodeBtn);
+    btnRow.append(saveDiskBtn, saveToNodeBtn, saveSettingsBtn);
     sidebar.appendChild(actionsWrapper);
     mainArea.append(toolbar, workspace);
-    overlay.append(mainArea, sidebar);
+    layersPanel.style.display = 'none';
+    overlay.append(layersPanel, mainArea, sidebar);
     document.body.appendChild(overlay);
 
     const isPotato = app.ui.settings.getSettingValue("Trix AIO Tools. Potato PC Mode.Enabled", false);
@@ -2237,6 +4362,7 @@ export function openTrixCameraRawEditor(node) {
         
         updateHslUI();
         updateCurvesUI();
+        renderLayersList();
 
         setTimeout(() => {
             centerImage();
@@ -2244,29 +4370,71 @@ export function openTrixCameraRawEditor(node) {
         }, 50);
     };
 
+    let layerCanvas = null;
+    let layerCtx = null;
+    const getLayerCanvas = (w, h) => {
+        if (!layerCanvas) {
+            layerCanvas = document.createElement("canvas");
+            layerCtx = layerCanvas.getContext("2d", { willReadFrequently: true });
+        }
+        if (layerCanvas.width !== w || layerCanvas.height !== h) {
+            layerCanvas.width = w;
+            layerCanvas.height = h;
+        }
+        return { canvas: layerCanvas, ctx: layerCtx };
+    };
+
     const renderPixels = (renderOriginal = false, fastMode = false) => {
         if (!baseImgData) return;
 
-        const activeState = renderOriginal ? {
-            cr_exp: 0, cr_cont: 0, cr_high: 0, cr_shad: 0, cr_white: 0, cr_black: 0, 
-            cr_temp: 0, cr_tint: 0, cr_colorfulness: 0, cr_sat: 0, cr_tex: 0, 
-            cr_clar: 0, cr_dehz: 0, cr_grain: 0, cr_sharp: 0, cr_blur: 0, cr_vignette: 0
-        } : state;
+        if (renderOriginal) {
+            const imgData = new ImageData(new Uint8ClampedArray(baseImgData), pW, pH);
+            ctx.putImageData(imgData, 0, 0);
+            drawWorkspace();
+            return;
+        }
 
-        const activeHslState = renderOriginal ? {
-            colorize: false, master: {h:0,s:0,l:0}, reds: {h:0,s:0,l:0}, yellows: {h:0,s:0,l:0},
-            greens: {h:0,s:0,l:0}, cyans: {h:0,s:0,l:0}, blues: {h:0,s:0,l:0}, magentas: {h:0,s:0,l:0}
-        } : hslState;
-        const activeCurvesState = renderOriginal ? createDefaultCurveState() : curvesState;
+        ctx.fillStyle = "rgba(0,0,0,0)";
+        ctx.clearRect(0, 0, pW, pH);
 
-        const imgData = new ImageData(pW, pH);
-        
-        processPixels(baseImgData, imgData.data, pW, pH, activeState, activeHslState, activeCurvesState);
+        // In filter mode, start by drawing the base image initially
+        if (layersMode === "filter") {
+            const imgData = new ImageData(new Uint8ClampedArray(baseImgData), pW, pH);
+            ctx.putImageData(imgData, 0, 0);
+        }
 
-        ctx.putImageData(imgData, 0, 0);
-        
-        applySpatialStages(ctx, pW, pH, activeState, 1);
-        
+        let firstVisible = true;
+        for (let i = 0; i < layers.length; i++) {
+            const layer = layers[i];
+            if (!layer.visible) continue;
+
+            const { canvas: lCvs, ctx: lCtx } = getLayerCanvas(pW, pH);
+            lCtx.clearRect(0, 0, pW, pH);
+
+            let inputData;
+            if (layersMode === "filter") {
+                inputData = ctx.getImageData(0, 0, pW, pH).data;
+            } else {
+                inputData = baseImgData;
+            }
+
+            const imgData = new ImageData(pW, pH);
+            processPixels(inputData, imgData.data, pW, pH, layer.state, layer.hslState, layer.curvesState);
+            lCtx.putImageData(imgData, 0, 0);
+            applySpatialStages(lCtx, pW, pH, layer.state, 1);
+
+            ctx.globalAlpha = layer.opacity / 100;
+            if (firstVisible && layersMode === "image") {
+                ctx.globalCompositeOperation = "source-over";
+                firstVisible = false;
+            } else {
+                ctx.globalCompositeOperation = layer.blendMode || "source-over";
+            }
+            ctx.drawImage(lCvs, 0, 0);
+        }
+        ctx.globalAlpha = 1.0;
+        ctx.globalCompositeOperation = "source-over";
+
         drawWorkspace();
     };
 
@@ -2364,21 +4532,41 @@ export function openTrixCameraRawEditor(node) {
             const y = Math.floor((e.clientY - rect.top) * scaleY);
             
             if (x >= 0 && x < pW && y >= 0 && y < pH) {
-                const pIdx = (y * pW + x) * 4;
-                const r = baseImgData[pIdx];
-                const g = baseImgData[pIdx+1];
-                const b = baseImgData[pIdx+2];
-                const [h, s, l] = rgbToHsl(r, g, b);
+                // Average 5x5 neighborhood to cancel high-frequency single-pixel noise
+                let sumR = 0, sumG = 0, sumB = 0, count = 0;
+                for (let dy = -2; dy <= 2; dy++) {
+                    for (let dx = -2; dx <= 2; dx++) {
+                        const nx = x + dx;
+                        const ny = y + dy;
+                        if (nx >= 0 && nx < pW && ny >= 0 && ny < pH) {
+                            const pIdx = (ny * pW + nx) * 4;
+                            sumR += baseImgData[pIdx];
+                            sumG += baseImgData[pIdx+1];
+                            sumB += baseImgData[pIdx+2];
+                            count++;
+                        }
+                    }
+                }
+                const avgR = sumR / count;
+                const avgG = sumG / count;
+                const avgB = sumB / count;
+                const [h, s, l] = rgbToHsl(avgR, avgG, avgB);
                 
                 let minDiff = 360;
                 let closestCh = 'master';
                 if (!hslState.colorize) {
-                    const channels = ['reds', 'yellows', 'greens', 'cyans', 'blues', 'magentas'];
-                    for (let ch of channels) {
-                        let center = hslState[ch].center;
-                        let diff = Math.abs(h - center);
-                        if (diff > 180) diff = 360 - diff;
-                        if (diff < minDiff) { minDiff = diff; closestCh = ch; }
+                    // Smart safety guard: if selected area is neutral/gray (saturation < 8%),
+                    // fall back to Master channel instead of targeting arbitrary noisy hue sectors.
+                    if (s < 0.08) {
+                        closestCh = 'master';
+                    } else {
+                        const channels = ['reds', 'yellows', 'greens', 'cyans', 'blues', 'magentas'];
+                        for (let ch of channels) {
+                            let center = hslState[ch].center;
+                            let diff = Math.abs(h - center);
+                            if (diff > 180) diff = 360 - diff;
+                            if (diff < minDiff) { minDiff = diff; closestCh = ch; }
+                        }
                     }
                     hslState.activeChannel = closestCh;
                     updateHslUI();
@@ -2483,16 +4671,83 @@ export function processPixels(srcData, targetData, w, h, crState, hState, cState
     const black = crState.cr_black || 0;
     const temp = crState.cr_temp || 0;
     const tint = crState.cr_tint || 0;
-    const vibrance = crState.cr_vibrance !== undefined ? crState.cr_vibrance : (crState.cr_colorfulness || 0);
+    const vibrance = crState.cr_vibrance !== undefined && crState.cr_vibrance !== null ? crState.cr_vibrance : (crState.cr_colorfulness || 0);
     const sat = crState.cr_sat || 0;
     const dehz = crState.cr_dehz || 0;
     const grain = crState.cr_grain || 0;
     const vignette = crState.cr_vignette || 0;
+    // New filter state reads
+    const cfDensity = (crState.cr_cf_density || 0) / 255;
+    const cfHue = crState.cr_cf_hue || 0;
+    const cfPreserve = (crState.cr_cf_preserve !== undefined && crState.cr_cf_preserve !== null ? crState.cr_cf_preserve : 50) / 100;
+    const hasCf = cfDensity > 0;
+    const lvlCh = crState.cr_lvl_channel || 'rgb';
+    const lvlInBlack = (crState.cr_lvl_in_black || 0) / 255;
+    const lvlInWhite = (crState.cr_lvl_in_white !== undefined && crState.cr_lvl_in_white !== null ? crState.cr_lvl_in_white : 255) / 255;
+    const lvlGamma = crState.cr_lvl_gamma !== undefined && crState.cr_lvl_gamma !== null ? crState.cr_lvl_gamma : 1.0;
+    const lvlOutBlack = (crState.cr_lvl_out_black || 0) / 255;
+    const lvlOutWhite = (crState.cr_lvl_out_white !== undefined && crState.cr_lvl_out_white !== null ? crState.cr_lvl_out_white : 255) / 255;
+    const hasLevels = lvlInBlack !== 0 || lvlInWhite !== 1 || lvlGamma !== 1.0 || lvlOutBlack !== 0 || lvlOutWhite !== 1;
+    const cbShadR = (crState.cr_cb_shad_r || 0) / 100;
+    const cbShadG = (crState.cr_cb_shad_g || 0) / 100;
+    const cbShadB = (crState.cr_cb_shad_b || 0) / 100;
+    const cbMidR = (crState.cr_cb_mid_r || 0) / 100;
+    const cbMidG = (crState.cr_cb_mid_g || 0) / 100;
+    const cbMidB = (crState.cr_cb_mid_b || 0) / 100;
+    const cbHighR = (crState.cr_cb_high_r || 0) / 100;
+    const cbHighG = (crState.cr_cb_high_g || 0) / 100;
+    const cbHighB = (crState.cr_cb_high_b || 0) / 100;
+    const hasCb = cbShadR||cbShadG||cbShadB||cbMidR||cbMidG||cbMidB||cbHighR||cbHighG||cbHighB;
+    const postEnable = !!crState.cr_post_enable;
+    const postLevels = crState.cr_post_levels !== undefined ? crState.cr_post_levels : 4;
+    const postMode = String(crState.cr_post_mode || 'RGB').toLowerCase();
+    const postDitherMode = String(crState.cr_post_dither_mode || 'None').toLowerCase();
+    const postDither = (crState.cr_post_dither || 0) / 100;
+    const hasPostPixel = postEnable && postLevels >= 2 && !postDitherMode.includes('floyd') && !postDitherMode.includes('atkinson');
+
+    const lvlRange = Math.max(0.00001, lvlInWhite - lvlInBlack);
+    const lvlGammaInv = lvlGamma !== 1.0 ? 1.0 / lvlGamma : 1.0;
+    const lvlOutRange = lvlOutWhite - lvlOutBlack;
+    const applyLevelsFloat = (v) => {
+        let t = (v - lvlInBlack) / lvlRange;
+        if (t < 0) t = 0; else if (t > 1) t = 1;
+        if (lvlGamma !== 1.0) t = Math.pow(t, lvlGammaInv);
+        return lvlOutBlack + t * lvlOutRange;
+    };
+    // Precompute color filter hue -> RGB tint
+    let cfTintR = 1, cfTintG = 1, cfTintB = 1;
+    if (hasCf) {
+        const h6 = cfHue / 60, ii = Math.floor(h6), f = h6 - ii;
+        const p = 0, q = 1 - f, t = f;
+        switch (((ii % 6) + 6) % 6) {
+            case 0: cfTintR=1; cfTintG=t; cfTintB=p; break; case 1: cfTintR=q; cfTintG=1; cfTintB=p; break;
+            case 2: cfTintR=p; cfTintG=1; cfTintB=t; break; case 3: cfTintR=p; cfTintG=q; cfTintB=1; break;
+            case 4: cfTintR=t; cfTintG=p; cfTintB=1; break; default: cfTintR=1; cfTintG=p; cfTintB=q;
+        }
+    }
+    // Posterize Bayer matrix (simple 4x4 for per-pixel dither)
+    const CR_BAYER4 = [[0,8,2,10],[12,4,14,6],[3,11,1,9],[15,7,13,5]];
 
     const hasHsl = hState.colorize || ['master', 'reds', 'yellows', 'greens', 'cyans', 'blues', 'magentas'].some(ch => {
         const conf = hState[ch] || {};
         return conf.h !== 0 || conf.s !== 0 || conf.l !== 0;
     });
+    const activeHslChannels = [];
+    if (hasHsl && !hState.colorize) {
+        const channels = ['reds', 'yellows', 'greens', 'cyans', 'blues', 'magentas'];
+        for (let ch of channels) {
+            const conf = hState[ch] || { h: 0, s: 0, l: 0, center: 0, width: 60 };
+            if (conf.h !== 0 || conf.s !== 0 || conf.l !== 0) {
+                activeHslChannels.push({
+                    center: Number.isFinite(conf.center) ? conf.center : 0,
+                    width: Number.isFinite(conf.width) ? conf.width : 60,
+                    h: conf.h,
+                    s: conf.s,
+                    l: conf.l
+                });
+            }
+        }
+    }
     const curveState = ensureCurveState(cState);
     const hasCurve = curveHasAdjustments(curveState);
     const curveRgbLut = hasCurve ? buildCurveLut(curveState.rgb) : null;
@@ -2504,7 +4759,7 @@ export function processPixels(srcData, targetData, w, h, crState, hState, cState
         let diff = Math.abs(hh - center);
         if (diff > 180) diff = 360 - diff;
         const half = Math.max(5, width / 2);
-        const falloff = Math.max(12, half * 0.65);
+        const falloff = Math.max(30, half * 1.0); // Broadened and softened falloff
         if (diff <= half) return 1;
         if (diff <= half + falloff) {
             const t = (diff - half) / falloff;
@@ -2733,7 +4988,7 @@ export function processPixels(srcData, targetData, w, h, crState, hState, cState
         b = Math.max(0, Math.min(1, b));
 
         if (hasHsl) {
-            let [hh, ss, ll] = rgbToHsl(r * 255, g * 255, b * 255);
+            let [hh, ss, ll] = rgbToHslFloat(r, g, b);
             
             if (hState.colorize) {
                 hh = hState.master.h;
@@ -2749,36 +5004,50 @@ export function processPixels(srcData, targetData, w, h, crState, hState, cState
                 // Accumulate saturation as a chroma multiplier (not HSL saturation)
                 let totalChromaMult = 1.0 + (hState.master.s / 100) * 1.2;
 
-                const channels = ['reds', 'yellows', 'greens', 'cyans', 'blues', 'magentas'];
-                for (let ch of channels) {
-                    let conf = hState[ch] || { h: 0, s: 0, l: 0, center: 0, width: 60 };
-                    if (conf.h === 0 && conf.s === 0 && conf.l === 0) continue;
-                    const center = Number.isFinite(conf.center) ? conf.center : 0;
-                    const width = Number.isFinite(conf.width) ? conf.width : 60;
-                    let weight = getHueWeight(hh, center, width);
+                const numActive = activeHslChannels.length;
+                for (let idx = 0; idx < numActive; idx++) {
+                    const chInfo = activeHslChannels[idx];
+                    let weight = getHueWeight(hh, chInfo.center, chInfo.width);
                     if (weight > 0) {
-                        totalHShift += conf.h * weight;
-                        totalChromaMult += (conf.s / 100) * 1.2 * weight;
-                        totalLShift += (conf.l / 100) * weight;
+                        totalHShift += chInfo.h * weight;
+                        totalChromaMult += (chInfo.s / 100) * 1.2 * weight;
+                        totalLShift += (chInfo.l / 100) * weight;
                     }
                 }
 
-                // Apply hue shift and lightness in HSL
+                // Apply hue shift in HSL
                 let newH = (hh + totalHShift) % 360;
                 if (newH < 0) newH += 360;
-                let newL = applyLightnessLikePhotoshop(ll, totalLShift);
-                
-                // Convert back with original saturation (only hue + lightness changed)
-                [r, g, b] = hslToRgb(newH, ss, newL);
+
+                // Convert back with original saturation (only hue changed here)
+                [r, g, b] = hslToRgb(newH, ss, ll);
                 r /= 255; g /= 255; b /= 255;
 
                 // Apply saturation as chroma scaling (safe for near-white pixels)
                 if (totalChromaMult !== 1.0) {
-                    const lum_hsl = r * 0.299 + g * 0.587 + b * 0.114;
+                    const lum_sat = r * 0.299 + g * 0.587 + b * 0.114;
                     const chromaMult = Math.max(0, totalChromaMult);
-                    r = lum_hsl + (r - lum_hsl) * chromaMult;
-                    g = lum_hsl + (g - lum_hsl) * chromaMult;
-                    b = lum_hsl + (b - lum_hsl) * chromaMult;
+                    r = lum_sat + (r - lum_sat) * chromaMult;
+                    g = lum_sat + (g - lum_sat) * chromaMult;
+                    b = lum_sat + (b - lum_sat) * chromaMult;
+                }
+
+                // Apply lightness as smooth linear-RGB blend (Photoshop-style):
+                // - positive shift → blend toward white (r=1, g=1, b=1)
+                // - negative shift → blend toward black (r=0, g=0, b=0)
+                // This avoids HSL re-quantization pixelation entirely.
+                if (Math.abs(totalLShift) > 0.0001) {
+                    const ls = Math.max(-1, Math.min(1, totalLShift));
+                    if (ls > 0) {
+                        r = r + (1 - r) * ls;
+                        g = g + (1 - g) * ls;
+                        b = b + (1 - b) * ls;
+                    } else {
+                        const abs_ls = -ls;
+                        r = r - r * abs_ls;
+                        g = g - g * abs_ls;
+                        b = b - b * abs_ls;
+                    }
                 }
             }
 
@@ -2788,20 +5057,82 @@ export function processPixels(srcData, targetData, w, h, crState, hState, cState
         }
 
         if (hasCurve) {
-            let ri = Math.max(0, Math.min(255, Math.round(r * 255)));
-            let gi = Math.max(0, Math.min(255, Math.round(g * 255)));
-            let bi = Math.max(0, Math.min(255, Math.round(b * 255)));
+            const applyLutFloat = (val, lut) => {
+                const f = val * 255;
+                const i0 = Math.floor(f);
+                const i1 = Math.min(255, i0 + 1);
+                const frac = f - i0;
+                return (lut[i0] * (1 - frac) + lut[i1] * frac) / 255;
+            };
 
-            ri = curveRgbLut[ri];
-            gi = curveRgbLut[gi];
-            bi = curveRgbLut[bi];
-            ri = curveRLut[ri];
-            gi = curveGLut[gi];
-            bi = curveBLut[bi];
+            r = applyLutFloat(r, curveRgbLut);
+            g = applyLutFloat(g, curveRgbLut);
+            b = applyLutFloat(b, curveRgbLut);
 
-            r = ri / 255;
-            g = gi / 255;
-            b = bi / 255;
+            r = applyLutFloat(r, curveRLut);
+            g = applyLutFloat(g, curveGLut);
+            b = applyLutFloat(b, curveBLut);
+        }
+
+        // --- Color Balance ---
+        if (hasCb) {
+            const lum_cb = r * 0.299 + g * 0.587 + b * 0.114;
+            const shadowW = Math.max(0, 1 - lum_cb * 2);
+            const highlightW = Math.max(0, lum_cb * 2 - 1);
+            const midW = Math.max(0, 1.0 - 2.0 * Math.abs(lum_cb - 0.5));
+            r = Math.max(0, Math.min(1, r + cbShadR * shadowW + cbMidR * midW + cbHighR * highlightW));
+            g = Math.max(0, Math.min(1, g + cbShadG * shadowW + cbMidG * midW + cbHighG * highlightW));
+            b = Math.max(0, Math.min(1, b + cbShadB * shadowW + cbMidB * midW + cbHighB * highlightW));
+        }
+
+        // --- Color Filter ---
+        if (hasCf) {
+            const lum_cf = r * 0.299 + g * 0.587 + b * 0.114;
+            let hlightMask = 1.0;
+            if (cfPreserve > 0) hlightMask = 1.0 - Math.max(0, (lum_cf - (1 - cfPreserve)) / cfPreserve);
+            const blend = cfDensity * hlightMask;
+            r = Math.max(0, Math.min(1, r * (1 - blend) + cfTintR * blend));
+            g = Math.max(0, Math.min(1, g * (1 - blend) + cfTintG * blend));
+            b = Math.max(0, Math.min(1, b * (1 - blend) + cfTintB * blend));
+        }
+
+        // --- Levels (Float-optimized) ---
+        if (hasLevels) {
+            if (lvlCh === 'rgb') {
+                r = applyLevelsFloat(r);
+                g = applyLevelsFloat(g);
+                b = applyLevelsFloat(b);
+            } else if (lvlCh === 'r') {
+                r = applyLevelsFloat(r);
+            } else if (lvlCh === 'g') {
+                g = applyLevelsFloat(g);
+            } else if (lvlCh === 'b') {
+                b = applyLevelsFloat(b);
+            }
+        }
+
+        // --- Posterize (Pixel-by-pixel modes: None, Bayer, Random) ---
+        if (hasPostPixel) {
+            const step = postLevels - 1;
+            const px = (i / 4) % w, py = Math.floor((i / 4) / w);
+            let bVal = 0;
+            if (postDitherMode === 'bayer' && postDither > 0) {
+                bVal = (CR_BAYER4[py & 3][px & 3] / 16 - 0.5) * postDither / step;
+            } else if (postDitherMode === 'random' && postDither > 0) {
+                const seed = (Math.abs((px | 0) * 12.9898 + (py | 0) * 78.233)) % 1;
+                bVal = (seed - 0.5) * postDither / step;
+            }
+            const quantize = (v) => Math.max(0, Math.min(1, Math.round((v + bVal) * step) / step));
+            if (postMode === 'luminance') {
+                const lum_p = r * 0.299 + g * 0.587 + b * 0.114;
+                const lumQ = quantize(lum_p);
+                const ratio = lum_p > 1e-4 ? lumQ / (lum_p + 1e-8) : 1;
+                r = Math.max(0, Math.min(1, r * ratio));
+                g = Math.max(0, Math.min(1, g * ratio));
+                b = Math.max(0, Math.min(1, b * ratio));
+            } else {
+                r = quantize(r); g = quantize(g); b = quantize(b);
+            }
         }
 
         targetData[i] = r * 255;
@@ -3401,11 +5732,11 @@ export function applySpatialStages(targetCtx, w, h, crState, scale = 1) {
 
     const sketch_kernel_size = crState.cr_sketch_kernel_size || 0;
     if (sketch_kernel_size > 0) {
-        const sketch_sigma = crState.cr_sketch_sigma !== undefined ? crState.cr_sketch_sigma : 1.4;
-        const k_sigma = crState.cr_sketch_k_sigma !== undefined ? crState.cr_sketch_k_sigma : 1.6;
-        const epsilon = crState.cr_sketch_epsilon !== undefined ? crState.cr_sketch_epsilon : -0.03;
-        const phi = crState.cr_sketch_phi !== undefined ? crState.cr_sketch_phi : 10.0;
-        const gamma = crState.cr_sketch_gamma !== undefined ? crState.cr_sketch_gamma : 1.0;
+        const sketch_sigma = crState.cr_sketch_sigma !== undefined && crState.cr_sketch_sigma !== null ? crState.cr_sketch_sigma : 1.4;
+        const k_sigma = crState.cr_sketch_k_sigma !== undefined && crState.cr_sketch_k_sigma !== null ? crState.cr_sketch_k_sigma : 1.6;
+        const epsilon = crState.cr_sketch_epsilon !== undefined && crState.cr_sketch_epsilon !== null ? crState.cr_sketch_epsilon : -0.03;
+        const phi = crState.cr_sketch_phi !== undefined && crState.cr_sketch_phi !== null ? crState.cr_sketch_phi : 10.0;
+        const gamma = crState.cr_sketch_gamma !== undefined && crState.cr_sketch_gamma !== null ? crState.cr_sketch_gamma : 1.0;
         const color_mode = crState.cr_sketch_color || 'gray';
         
         const k1 = sketch_kernel_size | 1;
@@ -3418,11 +5749,50 @@ export function applySpatialStages(targetCtx, w, h, crState, scale = 1) {
 
     const pixel_dot_size = crState.cr_pixel_dot_size || 0;
     if (pixel_dot_size > 1) {
-        const colors = crState.cr_pixel_colors !== undefined ? crState.cr_pixel_colors : 128;
+        const colors = crState.cr_pixel_colors !== undefined && crState.cr_pixel_colors !== null ? crState.cr_pixel_colors : 128;
         const outline = crState.cr_pixel_outline || 0;
         const smoothing = crState.cr_pixel_smoothing || 0;
         const algo = crState.cr_pixel_algo || 'kmeans';
         applyPixelize(targetCtx, w, h, Math.max(2, Math.round(pixel_dot_size * scale)), colors, outline, smoothing, algo);
+    }
+
+    // --- Advanced Blur ---
+    const crBlurRadius = crState.cr_blur_radius || 0;
+    if (crBlurRadius > 0) {
+        crApplyBlurFilter(targetCtx, w, h, crState.cr_blur_mode, crBlurRadius * scale);
+    }
+
+    // --- Halftone ---
+    const htSize = crState.cr_ht_size || 0;
+    if (htSize > 1) {
+        crApplyHalftone(targetCtx, w, h, {
+            size: Math.max(2, Math.round(htSize * scale)),
+            angle: crState.cr_ht_angle || 0,
+            contrast: crState.cr_ht_contrast || 0,
+            brightness: crState.cr_ht_brightness || 0,
+            dither: crState.cr_ht_dither || 0,
+            inverse: !!crState.cr_ht_inverse,
+            shape: crState.cr_ht_shape || 'Dot'
+        });
+    }
+
+    // --- Sharpen USM ---
+    const usmAmount = crState.cr_usm_amount || 0;
+    if (usmAmount > 0) {
+        crApplySharpenUSM(targetCtx, w, h, usmAmount, (crState.cr_usm_radius || 1) * scale, crState.cr_usm_threshold || 0);
+    }
+
+    // --- Laplacian Sharpen ---
+    const lapAmount = crState.cr_lap_amount || 0;
+    if (lapAmount > 0) {
+        crApplyLaplacianSharpen(targetCtx, w, h, lapAmount, crState.cr_lap_kernel);
+    }
+
+    // --- Posterize (Error Diffusion) ---
+    const postLevels = crState.cr_post_levels !== undefined && crState.cr_post_levels !== null ? crState.cr_post_levels : 4;
+    const postDitherMode = String(crState.cr_post_dither_mode || 'None').toLowerCase();
+    if (crState.cr_post_enable && postLevels >= 2 && (postDitherMode.includes('floyd') || postDitherMode.includes('atkinson'))) {
+        crApplyPosterizeErrorDiffuse(targetCtx, w, h, postLevels, crState.cr_post_mode, postDitherMode);
     }
 }
 

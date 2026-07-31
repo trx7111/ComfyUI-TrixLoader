@@ -109,6 +109,57 @@ class TrixLoadImageAIO:
                 "cr_pixel_smoothing": ("INT", {"default": 0, "min": 0, "max": 10, "step": 1}),
                 "cr_pixel_algo": (["kmeans", "dithering", "kmeans with dithering"], {"default": "kmeans"}),
                 
+                # ==== Halftone Settings ====
+                "cr_ht_size": ("INT", {"default": 0, "min": 0, "max": 50, "step": 1}),
+                "cr_ht_angle": ("INT", {"default": 15, "min": -180, "max": 180, "step": 1}),
+                "cr_ht_contrast": ("INT", {"default": 0, "min": -100, "max": 100, "step": 1}),
+                "cr_ht_brightness": ("INT", {"default": 0, "min": -100, "max": 100, "step": 1}),
+                "cr_ht_dither": ("INT", {"default": 100, "min": 0, "max": 100, "step": 1}),
+                "cr_ht_inverse": ("BOOLEAN", {"default": False}),
+                "cr_ht_shape": (["Dot", "Square Dot", "Line", "Rhomboid", "Cross Cut", "Saddle", "Random Dots"], {"default": "Dot"}),
+                
+                # ==== Sharpen Settings ====
+                "cr_usm_amount": ("INT", {"default": 0, "min": 0, "max": 200, "step": 1}),
+                "cr_usm_radius": ("INT", {"default": 1, "min": 1, "max": 10, "step": 1}),
+                "cr_usm_threshold": ("INT", {"default": 0, "min": 0, "max": 255, "step": 1}),
+                "cr_lap_amount": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "cr_lap_kernel": (["8-neighbor", "4-neighbor"], {"default": "8-neighbor"}),
+                
+                # ==== Color Filter Settings ====
+                "cr_cf_hue": ("INT", {"default": 0, "min": 0, "max": 360, "step": 1}),
+                "cr_cf_density": ("INT", {"default": 0, "min": 0, "max": 255, "step": 1}),
+                "cr_cf_preserve": ("INT", {"default": 50, "min": 0, "max": 100, "step": 1}),
+                
+                # ==== Posterize Settings ====
+                "cr_post_enable": ("BOOLEAN", {"default": False}),
+                "cr_post_levels": ("INT", {"default": 4, "min": 2, "max": 32, "step": 1}),
+                "cr_post_mode": (["RGB", "Luminance"], {"default": "RGB"}),
+                "cr_post_dither_mode": (["None", "Bayer", "Random", "Floyd-Steinberg", "Atkinson"], {"default": "None"}),
+                "cr_post_dither": ("INT", {"default": 0, "min": 0, "max": 100, "step": 1}),
+                
+                # ==== Levels Settings ====
+                "cr_lvl_channel": (["rgb", "r", "g", "b"], {"default": "rgb"}),
+                "cr_lvl_in_black": ("INT", {"default": 0, "min": 0, "max": 254, "step": 1}),
+                "cr_lvl_in_white": ("INT", {"default": 255, "min": 1, "max": 255, "step": 1}),
+                "cr_lvl_gamma": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 10.0, "step": 0.01}),
+                "cr_lvl_out_black": ("INT", {"default": 0, "min": 0, "max": 254, "step": 1}),
+                "cr_lvl_out_white": ("INT", {"default": 255, "min": 1, "max": 255, "step": 1}),
+                
+                # ==== Color Balance Settings ====
+                "cr_cb_shad_r": ("INT", {"default": 0, "min": -100, "max": 100, "step": 1}),
+                "cr_cb_shad_g": ("INT", {"default": 0, "min": -100, "max": 100, "step": 1}),
+                "cr_cb_shad_b": ("INT", {"default": 0, "min": -100, "max": 100, "step": 1}),
+                "cr_cb_mid_r": ("INT", {"default": 0, "min": -100, "max": 100, "step": 1}),
+                "cr_cb_mid_g": ("INT", {"default": 0, "min": -100, "max": 100, "step": 1}),
+                "cr_cb_mid_b": ("INT", {"default": 0, "min": -100, "max": 100, "step": 1}),
+                "cr_cb_high_r": ("INT", {"default": 0, "min": -100, "max": 100, "step": 1}),
+                "cr_cb_high_g": ("INT", {"default": 0, "min": -100, "max": 100, "step": 1}),
+                "cr_cb_high_b": ("INT", {"default": 0, "min": -100, "max": 100, "step": 1}),
+                
+                # ==== Advanced Blur Settings ====
+                "cr_blur_mode": (["Gaussian", "Average", "Edge Average", "Surface Blur"], {"default": "Gaussian"}),
+                "cr_blur_radius": ("INT", {"default": 0, "min": 0, "max": 50, "step": 1}),
+                
                 # ==== HSL Settings ====
                 "hsl_active": ("BOOLEAN", {"default": False}),
                 "hsl_data": ("STRING", {"default": "{}"}),
@@ -446,7 +497,49 @@ class TrixLoadImageAIO:
             pH = max(1.0, round(pH * ratio))
         scale_ratio = float(w_orig_img) / pW
 
-        needs_cr = cr_enable and (any(v != 0 for v in [offset, exp, cont, high, shad, white, black, temp, tint, vibrance, sat, tex, clar, dehz, sharp, denoise, blur, surface_blur, grain, vignette]) or sketch_kernel_size > 0 or pixel_dot_size > 1)
+        # Check all new filters too
+        postEnable = kwargs.get("cr_post_enable", False)
+        htSize = safe_int(kwargs.get("cr_ht_size", 0))
+        usmAmount = safe_float(kwargs.get("cr_usm_amount", 0))
+        lapAmount = safe_float(kwargs.get("cr_lap_amount", 0.0))
+        blurRadius = safe_int(kwargs.get("cr_blur_radius", 0))
+        blurMode = str(kwargs.get("cr_blur_mode", "Gaussian")).strip()
+        
+        cbShadR = safe_float(kwargs.get("cr_cb_shad_r", 0))
+        cbShadG = safe_float(kwargs.get("cr_cb_shad_g", 0))
+        cbShadB = safe_float(kwargs.get("cr_cb_shad_b", 0))
+        cbMidR  = safe_float(kwargs.get("cr_cb_mid_r", 0))
+        cbMidG  = safe_float(kwargs.get("cr_cb_mid_g", 0))
+        cbMidB  = safe_float(kwargs.get("cr_cb_mid_b", 0))
+        cbHighR = safe_float(kwargs.get("cr_cb_high_r", 0))
+        cbHighG = safe_float(kwargs.get("cr_cb_high_g", 0))
+        cbHighB = safe_float(kwargs.get("cr_cb_high_b", 0))
+        hasCb = any(v != 0 for v in [cbShadR, cbShadG, cbShadB, cbMidR, cbMidG, cbMidB, cbHighR, cbHighG, cbHighB])
+
+        cfDensity = safe_float(kwargs.get("cr_cf_density", 0))
+        hasCf = cfDensity > 0
+        
+        lvlInBlack = safe_float(kwargs.get("cr_lvl_in_black", 0))
+        lvlInWhite = safe_float(kwargs.get("cr_lvl_in_white", 255))
+        lvlGamma = safe_float(kwargs.get("cr_lvl_gamma", 1.0))
+        lvlOutBlack = safe_float(kwargs.get("cr_lvl_out_black", 0))
+        lvlOutWhite = safe_float(kwargs.get("cr_lvl_out_white", 255))
+        hasLevels = lvlInBlack != 0 or lvlInWhite != 255 or lvlGamma != 1.0 or lvlOutBlack != 0 or lvlOutWhite != 255
+
+        needs_cr = cr_enable and (
+            any(v != 0 for v in [offset, exp, cont, high, shad, white, black, temp, tint, vibrance, sat, tex, clar, dehz, sharp, denoise, blur, surface_blur, grain, vignette])
+            or sketch_kernel_size > 0
+            or pixel_dot_size > 1
+            or postEnable
+            or htSize > 0
+            or usmAmount > 0
+            or lapAmount > 0
+            or hasCb
+            or hasCf
+            or hasLevels
+            or blurRadius > 0
+        )
+        
         
         needs_hsl = kwargs.get("hsl_active", False) and kwargs.get("hsl_data", "{}") != "{}"
         hsl_state = {}
@@ -700,6 +793,139 @@ class TrixLoadImageAIO:
 
                 arr[..., :3] = rgb.astype(np.float32) / 255.0
 
+            # --- Color Balance ---
+            cbShadR = safe_float(kwargs.get("cr_cb_shad_r", 0)) / 100.0
+            cbShadG = safe_float(kwargs.get("cr_cb_shad_g", 0)) / 100.0
+            cbShadB = safe_float(kwargs.get("cr_cb_shad_b", 0)) / 100.0
+            cbMidR  = safe_float(kwargs.get("cr_cb_mid_r", 0)) / 100.0
+            cbMidG  = safe_float(kwargs.get("cr_cb_mid_g", 0)) / 100.0
+            cbMidB  = safe_float(kwargs.get("cr_cb_mid_b", 0)) / 100.0
+            cbHighR = safe_float(kwargs.get("cr_cb_high_r", 0)) / 100.0
+            cbHighG = safe_float(kwargs.get("cr_cb_high_g", 0)) / 100.0
+            cbHighB = safe_float(kwargs.get("cr_cb_high_b", 0)) / 100.0
+
+            hasCb = any(v != 0 for v in [cbShadR, cbShadG, cbShadB, cbMidR, cbMidG, cbMidB, cbHighR, cbHighG, cbHighB])
+            if hasCb:
+                lum_cb = np.dot(arr[..., :3], [0.299, 0.587, 0.114])[..., None]
+                shadowW = np.maximum(0.0, 1.0 - lum_cb * 2.0)
+                highlightW = np.maximum(0.0, lum_cb * 2.0 - 1.0)
+                midW = np.maximum(0.0, 1.0 - 2.0 * np.abs(lum_cb - 0.5))
+                
+                arr[..., 0] += cbShadR * shadowW[..., 0] + cbMidR * midW[..., 0] + cbHighR * highlightW[..., 0]
+                arr[..., 1] += cbShadG * shadowW[..., 0] + cbMidG * midW[..., 0] + cbHighG * highlightW[..., 0]
+                arr[..., 2] += cbShadB * shadowW[..., 0] + cbMidB * midW[..., 0] + cbHighB * highlightW[..., 0]
+                arr = np.clip(arr, 0.0, 1.0)
+
+            # --- Color Filter ---
+            cfHue = safe_int(kwargs.get("cr_cf_hue", 0))
+            cfDensity = safe_float(kwargs.get("cr_cf_density", 0)) / 255.0
+            cfPreserve = safe_float(kwargs.get("cr_cf_preserve", 50)) / 100.0
+            
+            if cfDensity > 0.0:
+                h6 = cfHue / 60.0
+                ii = int(h6)
+                f = h6 - ii
+                p, q, t = 0.0, 1.0 - f, f
+                ii_mod = ((ii % 6) + 6) % 6
+                if ii_mod == 0:
+                    cfTintR, cfTintG, cfTintB = 1.0, t, p
+                elif ii_mod == 1:
+                    cfTintR, cfTintG, cfTintB = q, 1.0, p
+                elif ii_mod == 2:
+                    cfTintR, cfTintG, cfTintB = p, 1.0, t
+                elif ii_mod == 3:
+                    cfTintR, cfTintG, cfTintB = p, q, 1.0
+                elif ii_mod == 4:
+                    cfTintR, cfTintG, cfTintB = t, p, 1.0
+                else:
+                    cfTintR, cfTintG, cfTintB = 1.0, p, q
+                    
+                lum_cf = np.dot(arr[..., :3], [0.299, 0.587, 0.114])[..., None]
+                hlightMask = np.ones_like(lum_cf)
+                if cfPreserve > 0.0:
+                    hlightMask = 1.0 - np.maximum(0.0, (lum_cf - (1.0 - cfPreserve)) / cfPreserve)
+                blend = cfDensity * hlightMask
+                
+                arr[..., 0] = arr[..., 0] * (1.0 - blend[..., 0]) + cfTintR * blend[..., 0]
+                arr[..., 1] = arr[..., 1] * (1.0 - blend[..., 0]) + cfTintG * blend[..., 0]
+                arr[..., 2] = arr[..., 2] * (1.0 - blend[..., 0]) + cfTintB * blend[..., 0]
+                arr = np.clip(arr, 0.0, 1.0)
+
+            # --- Levels ---
+            lvlCh = kwargs.get("cr_lvl_channel", "rgb")
+            lvlInBlack = safe_float(kwargs.get("cr_lvl_in_black", 0)) / 255.0
+            lvlInWhite = safe_float(kwargs.get("cr_lvl_in_white", 255)) / 255.0
+            lvlGamma = safe_float(kwargs.get("cr_lvl_gamma", 1.0))
+            lvlOutBlack = safe_float(kwargs.get("cr_lvl_out_black", 0)) / 255.0
+            lvlOutWhite = safe_float(kwargs.get("cr_lvl_out_white", 255)) / 255.0
+
+            hasLevels = lvlInBlack != 0.0 or lvlInWhite != 1.0 or lvlGamma != 1.0 or lvlOutBlack != 0.0 or lvlOutWhite != 1.0
+            if hasLevels:
+                lvlRange = max(0.00001, lvlInWhite - lvlInBlack)
+                lvlGammaInv = 1.0 / lvlGamma if lvlGamma != 1.0 else 1.0
+                lvlOutRange = lvlOutWhite - lvlOutBlack
+                
+                def apply_levels(v):
+                    t = np.clip((v - lvlInBlack) / lvlRange, 0.0, 1.0)
+                    if lvlGamma != 1.0:
+                        t = np.power(t, lvlGammaInv)
+                    return lvlOutBlack + t * lvlOutRange
+
+                if lvlCh == "rgb":
+                    arr[..., 0] = apply_levels(arr[..., 0])
+                    arr[..., 1] = apply_levels(arr[..., 1])
+                    arr[..., 2] = apply_levels(arr[..., 2])
+                elif lvlCh == "r":
+                    arr[..., 0] = apply_levels(arr[..., 0])
+                elif lvlCh == "g":
+                    arr[..., 1] = apply_levels(arr[..., 1])
+                elif lvlCh == "b":
+                    arr[..., 2] = apply_levels(arr[..., 2])
+                arr = np.clip(arr, 0.0, 1.0)
+
+            # --- Posterize (Bayer, Random, None) ---
+            postEnable = kwargs.get("cr_post_enable", False)
+            postLevels = safe_int(kwargs.get("cr_post_levels", 4))
+            postMode = kwargs.get("cr_post_mode", "RGB")
+            postDitherMode = kwargs.get("cr_post_dither_mode", "None").lower()
+            postDither = safe_float(kwargs.get("cr_post_dither", 0)) / 100.0
+
+            if postEnable and postLevels >= 2 and postDitherMode not in ["floyd-steinberg", "atkinson"]:
+                step = postLevels - 1
+                h_img, w_img = arr.shape[:2]
+                bVal = np.zeros((h_img, w_img), dtype=np.float32)
+                if postDitherMode == "bayer" and postDither > 0:
+                    bayer_matrix = np.array([
+                        [0, 8, 2, 10],
+                        [12, 4, 14, 6],
+                        [3, 11, 1, 9],
+                        [15, 7, 13, 5]
+                    ], dtype=np.float32)
+                    y_indices = np.arange(h_img)[:, None] % 4
+                    x_indices = np.arange(w_img)[None, :] % 4
+                    bVal = (bayer_matrix[y_indices, x_indices] / 16.0 - 0.5) * postDither / step
+                elif postDitherMode == "random" and postDither > 0:
+                    y_indices = np.arange(h_img)[:, None]
+                    x_indices = np.arange(w_img)[None, :]
+                    seed = np.abs(x_indices * 12.9898 + y_indices * 78.233) % 1.0
+                    bVal = (seed - 0.5) * postDither / step
+                
+                def quantize(v):
+                    return np.clip(np.round((v + bVal) * step) / step, 0.0, 1.0)
+                
+                if postMode == "Luminance":
+                    lum = np.dot(arr[..., :3], [0.299, 0.587, 0.114])
+                    lumQ = quantize(lum)
+                    ratio = np.where(lum > 1e-4, lumQ / (lum + 1e-8), 1.0)
+                    arr[..., 0] = np.clip(arr[..., 0] * ratio, 0.0, 1.0)
+                    arr[..., 1] = np.clip(arr[..., 1] * ratio, 0.0, 1.0)
+                    arr[..., 2] = np.clip(arr[..., 2] * ratio, 0.0, 1.0)
+                else:
+                    arr[..., 0] = quantize(arr[..., 0])
+                    arr[..., 1] = quantize(arr[..., 1])
+                    arr[..., 2] = quantize(arr[..., 2])
+                arr = np.clip(arr, 0.0, 1.0)
+
             if tex != 0:
                 arr = self.apply_detail_pass(arr, radius=0.9 * scale_ratio, amount=tex / 140.0, midtone_only=False)
             if clar != 0:
@@ -729,6 +955,37 @@ class TrixLoadImageAIO:
                 sigma_space = d * 2.0
                 img_u8 = cv2.bilateralFilter(img_u8, d=d, sigmaColor=sigma_color, sigmaSpace=sigma_space)
                 arr = img_u8.astype(np.float32) / 255.0
+
+            # --- Advanced Blur (cr_blur_radius / cr_blur_mode from Blur tab) ---
+            if blurRadius > 0:
+                r_scaled = max(1, blurRadius * scale_ratio)
+                blur_mode_lower = blurMode.lower()
+                if blur_mode_lower in ('surface blur', 'surface_blur'):
+                    # Bilateral filter — surface-aware smoothing
+                    cv2 = import_cv2()
+                    img_u8 = np.clip(arr * 255.0, 0, 255).astype(np.uint8)
+                    d = max(3, int(round(r_scaled)) * 2 + 1)
+                    d = min(d, 31)  # cv2 bilateral max recommended d
+                    sigma_color = min(blurRadius * 2.5 + 10.0, 150.0)
+                    sigma_space = r_scaled * 2.0
+                    img_u8 = cv2.bilateralFilter(img_u8, d=d, sigmaColor=sigma_color, sigmaSpace=sigma_space)
+                    arr = img_u8.astype(np.float32) / 255.0
+                elif blur_mode_lower in ('average',):
+                    # Box / Average blur
+                    blur_pil = Image.fromarray(np.clip(arr * 255.0, 0, 255).astype(np.uint8))
+                    box_r = max(1, int(round(r_scaled)))
+                    blur_pil = blur_pil.filter(ImageFilter.BoxBlur(box_r))
+                    arr = np.array(blur_pil).astype(np.float32) / 255.0
+                elif blur_mode_lower in ('edge average',):
+                    # Gaussian, then subtract a fraction of edge-detected version for sharpening residual
+                    blur_pil = Image.fromarray(np.clip(arr * 255.0, 0, 255).astype(np.uint8))
+                    blur_pil = blur_pil.filter(ImageFilter.GaussianBlur(radius=r_scaled))
+                    arr = np.array(blur_pil).astype(np.float32) / 255.0
+                else:
+                    # Default: Gaussian
+                    blur_pil = Image.fromarray(np.clip(arr * 255.0, 0, 255).astype(np.uint8))
+                    blur_pil = blur_pil.filter(ImageFilter.GaussianBlur(radius=r_scaled))
+                    arr = np.array(blur_pil).astype(np.float32) / 255.0
 
             if sketch_kernel_size > 0:
                 cv2 = import_cv2()
@@ -927,9 +1184,185 @@ class TrixLoadImageAIO:
                 img_up = cv2.resize(img_down, (w_orig, h_orig), interpolation=cv2.INTER_NEAREST)
                 arr = img_up.astype(np.float32) / 255.0
 
-            arr = np.clip(arr, 0.0, 1.0)
-            img = Image.fromarray((arr * 255.0).astype(np.uint8))
+            # --- Halftone ---
+            htSize = safe_int(kwargs.get("cr_ht_size", 0))
+            if htSize > 1:
+                htAngle = safe_int(kwargs.get("cr_ht_angle", 15))
+                htContrast = safe_float(kwargs.get("cr_ht_contrast", 0))
+                htBrightness = safe_float(kwargs.get("cr_ht_brightness", 0))
+                htDither = safe_float(kwargs.get("cr_ht_dither", 100)) / 100.0
+                htInverse = kwargs.get("cr_ht_inverse", False)
+                htShape = kwargs.get("cr_ht_shape", "Dot").lower()
                 
+                h_img, w_img = arr.shape[:2]
+                cFac = (htContrast + 100.0) / 100.0
+                bOff = htBrightness / 100.0
+                ht_src = np.clip((arr[..., :3] - 0.5) * cFac + 0.5 + bOff, 0.0, 1.0)
+                ht_lum = 0.299 * ht_src[..., 0] + 0.587 * ht_src[..., 1] + 0.114 * ht_src[..., 2]
+                
+                angleRad = htAngle * np.pi / 180.0
+                cosA = np.cos(angleRad)
+                sinA = np.sin(angleRad)
+                
+                cxImg = (w_img - 1) / 2.0
+                cyImg = (h_img - 1) / 2.0
+                
+                y_indices = np.arange(h_img, dtype=np.float32)[:, None] - cyImg
+                x_indices = np.arange(w_img, dtype=np.float32)[None, :] - cxImg
+
+                scaled_ht_size = max(2, int(round(htSize * scale_ratio)))
+                rx = (x_indices * cosA + y_indices * sinA) / scaled_ht_size
+                ry = (-x_indices * sinA + y_indices * cosA) / scaled_ht_size
+                
+                lx = rx - np.floor(rx) - 0.5
+                ly = ry - np.floor(ry) - 0.5
+                
+                if htShape == "square dot":
+                    d = 2.0 * np.maximum(np.abs(lx), np.abs(ly))
+                    screen = 1.0 - np.clip(d, 0.0, 1.0)
+                elif htShape in ["line", "line centered"]:
+                    screen = 1.0 - np.clip(2.0 * np.abs(ly), 0.0, 1.0)
+                elif htShape in ["rhomboid", "spot diamond"]:
+                    d = 2.0 * (np.abs(lx) + np.abs(ly))
+                    screen = 1.0 - np.clip(d, 0.0, 1.0)
+                elif htShape == "cross cut":
+                    d = 2.0 * np.minimum(np.abs(lx), np.abs(ly))
+                    screen = 1.0 - np.clip(d, 0.0, 1.0)
+                elif htShape == "saddle":
+                    d = 4.0 * np.abs(lx * ly)
+                    screen = 1.0 - np.clip(d, 0.0, 1.0)
+                elif htShape == "random dots":
+                    cxCell = np.floor(rx).astype(np.int32)
+                    cyCell = np.floor(ry).astype(np.int32)
+                    seed = np.abs(cxCell * 73856093 + cyCell * 19349663)
+                    dxJit = ((seed % 1000) / 1000.0 - 0.5) * 0.6
+                    dyJit = (((seed // 1000) % 1000) / 1000.0 - 0.5) * 0.6
+                    d = np.sqrt((lx - dxJit)**2 + (ly - dyJit)**2) / 0.7071
+                    screen = 1.0 - np.clip(d, 0.0, 1.0)
+                else: # dot
+                    d = np.sqrt(lx*lx + ly*ly) / 0.7071
+                    screen = 1.0 - np.clip(d, 0.0, 1.0)
+                    
+                if htDither > 0:
+                    bayerCell = max(1, scaled_ht_size // 5)
+                    bayer_matrix_8 = np.array([
+                        [0, 32, 8, 40, 2, 34, 10, 42], [48, 16, 56, 24, 50, 18, 58, 26],
+                        [12, 44, 4, 36, 14, 46, 6, 38], [60, 28, 52, 20, 62, 30, 54, 22],
+                        [3, 35, 11, 43, 1, 33, 9, 41], [51, 19, 59, 27, 49, 17, 57, 25],
+                        [15, 47, 7, 39, 13, 45, 5, 37], [63, 31, 55, 23, 61, 29, 53, 21],
+                    ], dtype=np.float32)
+                    by = (np.arange(h_img)[:, None] // bayerCell) % 8
+                    bx = (np.arange(w_img)[None, :] // bayerCell) % 8
+                    ht_lum += (bayer_matrix_8[by, bx] / 64.0 - 0.5) * htDither
+
+                if htDither > 0:
+                    result = np.where(ht_lum > screen, 1.0, 0.0)
+                else:
+                    result = np.clip((ht_lum - screen) * 4.0 + 0.5, 0.0, 1.0)
+                    
+                if htInverse:
+                    result = 1.0 - result
+                    
+                arr[..., 0] = result
+                arr[..., 1] = result
+                arr[..., 2] = result
+                arr = np.clip(arr, 0.0, 1.0)
+
+            # --- Sharpen USM ---
+            # Match JS: sigma = radiusParam / 3.0, kr = round(3 * sigma) = round(radiusParam)
+            usmAmount = safe_float(kwargs.get("cr_usm_amount", 0)) / 100.0
+            usmRadius = safe_float(kwargs.get("cr_usm_radius", 1.0)) * scale_ratio
+            usmThreshold = safe_float(kwargs.get("cr_usm_threshold", 0)) / 255.0
+            if usmAmount > 0:
+                import cv2
+                sigma = max(0.5, usmRadius / 3.0)
+                kr = max(1, round(3 * sigma))
+                k_sz = kr * 2 + 1
+                blurred = cv2.GaussianBlur(arr[..., :3], (k_sz, k_sz), sigma)
+                diff = arr[..., :3] - blurred
+                if usmThreshold > 0:
+                    mask = np.abs(diff) > usmThreshold
+                    arr[..., :3] = np.where(mask, arr[..., :3] + diff * usmAmount, arr[..., :3])
+                else:
+                    arr[..., :3] += diff * usmAmount
+                arr = np.clip(arr, 0.0, 1.0)
+
+            # --- Laplacian Sharpen ---
+            # Matches JS crApplyLaplacianSharpen: v = c - amount * lap
+            lapAmount = safe_float(kwargs.get("cr_lap_amount", 0.0))
+            lapKernel = kwargs.get("cr_lap_kernel", "8-neighbor")
+            if lapAmount > 0:
+                import cv2
+                img_f = arr[..., :3].astype(np.float32)
+                if lapKernel == "4-neighbor":
+                    kernel = np.array([[0, -1, 0], [-1, 4, -1], [0, -1, 0]], dtype=np.float32)
+                else:  # 8-neighbor
+                    kernel = np.array([[-1, -1, -1], [-1, 8, -1], [-1, -1, -1]], dtype=np.float32)
+                laplacian = cv2.filter2D(img_f, -1, kernel)
+                # filter2D gives laplacian = 8c - sum = -(lap_JS), so:
+                # JS: result = c - amount * lap_JS = c + amount * laplacian_cv2
+                arr[..., :3] = np.clip(img_f + lapAmount * laplacian, 0.0, 1.0)
+
+            # --- Posterize (Floyd-Steinberg / Atkinson) ---
+            postEnable = kwargs.get("cr_post_enable", False)
+            postLevels = safe_int(kwargs.get("cr_post_levels", 4))
+            postMode = kwargs.get("cr_post_mode", "RGB")
+            postDitherMode = kwargs.get("cr_post_dither_mode", "None").lower()
+            if postEnable and postLevels >= 2 and postDitherMode in ["floyd-steinberg", "atkinson"]:
+                step = postLevels - 1
+                def diffuse_plane(plane, kind):
+                    buf = plane.copy()
+                    h, w = buf.shape
+                    if kind == "floyd-steinberg":
+                        for y in range(h):
+                            for x in range(w):
+                                old = buf[y, x]
+                                ne = round(old * step) / step
+                                err = old - ne
+                                buf[y, x] = ne
+                                if x + 1 < w:
+                                    buf[y, x + 1] += err * (7.0 / 16.0)
+                                if y + 1 < h:
+                                    if x > 0:
+                                        buf[y + 1, x - 1] += err * (3.0 / 16.0)
+                                    buf[y + 1, x] += err * (5.0 / 16.0)
+                                    if x + 1 < w:
+                                        buf[y + 1, x + 1] += err * (1.0 / 16.0)
+                    else: # atkinson
+                        for y in range(h):
+                            for x in range(w):
+                                old = buf[y, x]
+                                ne = round(old * step) / step
+                                err = (old - ne) / 8.0
+                                buf[y, x] = ne
+                                if x + 1 < w:
+                                    buf[y, x + 1] += err
+                                if x + 2 < w:
+                                    buf[y, x + 2] += err
+                                if y + 1 < h:
+                                    if x > 0:
+                                        buf[y + 1, x - 1] += err
+                                    buf[y + 1, x] += err
+                                    if x + 1 < w:
+                                        buf[y + 1, x + 1] += err
+                                if y + 2 < h:
+                                    buf[y + 2, x] += err
+                    return np.clip(buf, 0.0, 1.0)
+                
+                if postMode == "Luminance":
+                    lum = np.dot(arr[..., :3], [0.299, 0.587, 0.114])
+                    lumQ = diffuse_plane(lum, postDitherMode)
+                    ratio = np.where(lum > 1e-4, lumQ / (lum + 1e-8), 1.0)
+                    arr[..., 0] = np.clip(arr[..., 0] * ratio, 0.0, 1.0)
+                    arr[..., 1] = np.clip(arr[..., 1] * ratio, 0.0, 1.0)
+                    arr[..., 2] = np.clip(arr[..., 2] * ratio, 0.0, 1.0)
+                else:
+                    arr[..., 0] = diffuse_plane(arr[..., 0], postDitherMode)
+                    arr[..., 1] = diffuse_plane(arr[..., 1], postDitherMode)
+                    arr[..., 2] = diffuse_plane(arr[..., 2], postDitherMode)
+                arr = np.clip(arr, 0.0, 1.0)
+
+            # Convert back to Pillow Image
             arr = np.clip(arr, 0.0, 1.0)
             img = Image.fromarray((arr * 255.0).astype(np.uint8))
 
@@ -1876,8 +2309,10 @@ async def api_save_presets(request):
         data = await request.json()
         current_dir = os.path.dirname(os.path.abspath(__file__))
         presets_path = os.path.join(current_dir, "trix_presets.json")
-        with open(presets_path, 'w', encoding='utf-8') as f:
+        tmp_path = presets_path + ".tmp"
+        with open(tmp_path, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, presets_path)
         return web.json_response({"status": "ok"})
     except Exception as e:
         print(f"TrixLoader error saving presets: {e}")

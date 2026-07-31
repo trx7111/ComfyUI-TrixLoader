@@ -1,1 +1,303 @@
-[]
+[
+  {
+    "state": {
+      "cr_offset": 0,
+      "cr_exp": 5,
+      "cr_cont": 8,
+      "cr_high": -15,
+      "cr_shad": 8,
+      "cr_white": 12,
+      "cr_black": -5,
+      "cr_temp": -4,
+      "cr_tint": 0,
+      "cr_vibrance": 14,
+      "cr_colorfulness": 14,
+      "cr_sat": 2,
+      "cr_tex": 12,
+      "cr_clar": 18,
+      "cr_dehz": 15,
+      "cr_sharp": 20,
+      "cr_denoise": 0,
+      "cr_blur": 0,
+      "cr_surface_blur": 0,
+      "cr_grain": 0,
+      "cr_vignette": 0,
+      "cr_sketch_kernel_size": 0,
+      "cr_sketch_sigma": 1.4,
+      "cr_sketch_k_sigma": 1.6,
+      "cr_sketch_epsilon": -0.03,
+      "cr_sketch_phi": 10,
+      "cr_sketch_gamma": 1,
+      "cr_sketch_color": "gray",
+      "cr_pixel_colors": 128,
+      "cr_pixel_dot_size": 0,
+      "cr_pixel_outline": 0,
+      "cr_pixel_smoothing": 0,
+      "cr_pixel_algo": "kmeans",
+      "cr_blur_radius": 0,
+      "cr_blur_mode": "gaussian",
+      "cr_ht_size": 0,
+      "cr_ht_angle": 15,
+      "cr_ht_contrast": 0,
+      "cr_ht_brightness": 0,
+      "cr_ht_dither": 100,
+      "cr_ht_inverse": false,
+      "cr_ht_shape": "Dot",
+      "cr_usm_amount": 0,
+      "cr_usm_radius": 1,
+      "cr_usm_threshold": 0,
+      "cr_lap_amount": 0,
+      "cr_lap_kernel": "8-neighbor",
+      "cr_cf_hue": 0,
+      "cr_cf_density": 0,
+      "cr_cf_preserve": 50,
+      "cr_post_enable": false,
+      "cr_post_levels": 4,
+      "cr_post_mode": "RGB",
+      "cr_post_dither_mode": "None",
+      "cr_post_dither": 0,
+      "cr_lvl_channel": "rgb",
+      "cr_lvl_in_black": 0,
+      "cr_lvl_in_white": 255,
+      "cr_lvl_gamma": 1,
+      "cr_lvl_out_black": 0,
+      "cr_lvl_out_white": 255,
+      "cr_cb_shad_r": 0,
+      "cr_cb_shad_g": 0,
+      "cr_cb_shad_b": 0,
+      "cr_cb_mid_r": 0,
+      "cr_cb_mid_g": 0,
+      "cr_cb_mid_b": 0,
+      "cr_cb_high_r": 0,
+      "cr_cb_high_g": 0,
+      "cr_cb_high_b": 0
+    },
+    "hslState": {
+      "colorize": false,
+      "activeChannel": "master",
+      "master": {
+        "h": 0,
+        "s": 0,
+        "l": 0
+      },
+      "reds": {
+        "h": 0,
+        "s": 0,
+        "l": 0,
+        "center": 0,
+        "width": 60
+      },
+      "yellows": {
+        "h": 0,
+        "s": 0,
+        "l": 0,
+        "center": 60,
+        "width": 60
+      },
+      "greens": {
+        "h": 0,
+        "s": 0,
+        "l": 0,
+        "center": 120,
+        "width": 60
+      },
+      "cyans": {
+        "h": 0,
+        "s": 0,
+        "l": 0,
+        "center": 180,
+        "width": 60
+      },
+      "blues": {
+        "h": 0,
+        "s": 0,
+        "l": 0,
+        "center": 240,
+        "width": 60
+      },
+      "magentas": {
+        "h": 0,
+        "s": 0,
+        "l": 0,
+        "center": 300,
+        "width": 60
+      }
+    },
+    "curvesState": {
+      "activeChannel": "rgb",
+      "rgb": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 255,
+          "y": 255
+        }
+      ],
+      "r": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 255,
+          "y": 255
+        }
+      ],
+      "g": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 255,
+          "y": 255
+        }
+      ],
+      "b": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 255,
+          "y": 255
+        }
+      ]
+    },
+    "name": "Imported Preset 1"
+  },
+  {
+    "state": {
+      "cr_offset": 0,
+      "cr_exp": 0,
+      "cr_cont": 0,
+      "cr_high": 0,
+      "cr_shad": 0,
+      "cr_white": 0,
+      "cr_black": 0,
+      "cr_temp": 0,
+      "cr_tint": 0,
+      "cr_vibrance": 0,
+      "cr_colorfulness": 0,
+      "cr_sat": 0,
+      "cr_tex": 0,
+      "cr_clar": 0,
+      "cr_dehz": 0,
+      "cr_sharp": 150,
+      "cr_denoise": 0,
+      "cr_blur": 0,
+      "cr_surface_blur": 0,
+      "cr_grain": 17,
+      "cr_vignette": 0,
+      "cr_sketch_kernel_size": 0,
+      "cr_sketch_sigma": 1.4,
+      "cr_sketch_k_sigma": 1.6,
+      "cr_sketch_epsilon": -0.03,
+      "cr_sketch_phi": 10,
+      "cr_sketch_gamma": 1,
+      "cr_sketch_color": "gray",
+      "cr_pixel_colors": 128,
+      "cr_pixel_dot_size": 0,
+      "cr_pixel_outline": 0,
+      "cr_pixel_smoothing": 0,
+      "cr_pixel_algo": "kmeans"
+    },
+    "hslState": {
+      "colorize": false,
+      "activeChannel": "master",
+      "master": {
+        "h": 0,
+        "s": 0,
+        "l": 0
+      },
+      "reds": {
+        "h": 0,
+        "s": 0,
+        "l": 0,
+        "center": 0,
+        "width": 60
+      },
+      "yellows": {
+        "h": 0,
+        "s": 0,
+        "l": 0,
+        "center": 60,
+        "width": 60
+      },
+      "greens": {
+        "h": 0,
+        "s": 0,
+        "l": 0,
+        "center": 120,
+        "width": 60
+      },
+      "cyans": {
+        "h": 0,
+        "s": 0,
+        "l": 0,
+        "center": 180,
+        "width": 60
+      },
+      "blues": {
+        "h": 0,
+        "s": 0,
+        "l": 0,
+        "center": 240,
+        "width": 60
+      },
+      "magentas": {
+        "h": 0,
+        "s": 0,
+        "l": 0,
+        "center": 300,
+        "width": 60
+      }
+    },
+    "curvesState": {
+      "activeChannel": "rgb",
+      "rgb": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 255,
+          "y": 255
+        }
+      ],
+      "r": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 255,
+          "y": 255
+        }
+      ],
+      "g": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 255,
+          "y": 255
+        }
+      ],
+      "b": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 255,
+          "y": 255
+        }
+      ]
+    },
+    "name": "Imported Preset 2"
+  }
+]

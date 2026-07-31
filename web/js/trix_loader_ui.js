@@ -118,10 +118,12 @@ api.addEventListener("trix-update-preview", (event) => {
 });
 
 const svgCopy = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 6px;"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
-const svgPaste = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 6px;"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect></svg>`;
+const svgPaste = `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: block;"><rect x="5.5" y="5" width="13" height="16" rx="3" ry="3"></rect><path d="M9 5V4a1.5 1.5 0 0 1 1.5-1.5h3A1.5 1.5 0 0 1 15 4v1"></path></svg>`;
 const svgUpload = `<svg viewBox="0 0 24 24" width="11.2" height="11.2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;"><path d="M12 3v12"></path><path d="m7 8 5-5 5 5"></path><path d="M5 21h14"></path><path d="M5 17v4"></path><path d="M19 17v4"></path></svg>`;
 const svgChevronLeft = `<svg viewBox="0 0 12 12" width="9" height="9" fill="currentColor" aria-hidden="true" style="display: block;"><path d="M8.2 1.1 3.1 6l5.1 4.9V1.1Z"></path></svg>`;
 const svgChevronRight = `<svg viewBox="0 0 12 12" width="9" height="9" fill="currentColor" aria-hidden="true" style="display: block;"><path d="M3.8 1.1 8.9 6l-5.1 4.9V1.1Z"></path></svg>`;
+const svgChevronDown = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transition: transform 0.2s;"><polyline points="6 9 12 15 18 9"></polyline></svg>`;
+
 
 let TRIX_BG = "#303540";
 let TRIX_MASK_TOOLBAR_BG = "#303540";
@@ -415,9 +417,6 @@ const wrapNodeGetExtraMenuOptions = (nodeType) => {
     nodeType.prototype.getExtraMenuOptions = function(canvas, options) {
         if (origGetExtraMenuOptions) {
             origGetExtraMenuOptions.apply(this, arguments);
-        } else {
-            const baseGet = LiteGraph.LGraphNode.prototype.getExtraMenuOptions;
-            if (baseGet) baseGet.apply(this, arguments);
         }
         
         // Skip for TrixLoadImageAIO because it has its own custom menu logic
@@ -458,7 +457,7 @@ const wrapNodeGetExtraMenuOptions = (nodeType) => {
                 // Copy Image
                 if (showCopyImage) {
                     options.push({
-                        content: "☐ Copy Image",
+                        content: "⿻ Copy Image",
                         callback: () => {
                             const doCopy = (imgElement) => {
                                 try {
@@ -558,7 +557,7 @@ const wrapNodeGetExtraMenuOptions = (nodeType) => {
             // Paste Image
             if (showPasteImage) {
                 options.push({
-                    content: "■ Paste Image",
+                    content: "⧉ Paste Image",
                     callback: async () => {
                         try {
                             const items = await navigator.clipboard.read();
@@ -1722,7 +1721,7 @@ Control Tabs on the Node:
                     options.push(null);
                     if (showCopyImage && this.imgTagRef && this.imgTagRef.complete && this.imgTagRef.naturalWidth > 0) {
                         options.push({
-                            content: `${svgCopy} Copy Image`,
+                            content: "🗐 Copy Image",
                             callback: () => {
                                 try {
                                     const tCanvas = document.createElement("canvas");
@@ -1746,7 +1745,7 @@ Control Tabs on the Node:
                     }
                     if (showPasteImage) {
                         options.push({
-                            content: `${svgPaste} Paste Image`,
+                            content: "⎘ Paste Image",
                             callback: async () => {
                                 try {
                                     const items = await navigator.clipboard.read();
@@ -1779,7 +1778,7 @@ Control Tabs on the Node:
                     options.push(null);
                     if (showCopyMask) {
                         options.push({
-                            content: `${svgCopy} Copy Mask`,
+                            content: "⚇ Copy Mask",
                             callback: () => {
                                 if (!this.maskCanvasRef) return;
                                 try {
@@ -1798,7 +1797,7 @@ Control Tabs on the Node:
                     }
                     if (showPasteMask) {
                         options.push({
-                            content: `${svgPaste} Paste Mask`,
+                            content: "⚉ Paste Mask",
                             callback: async () => {
                                 if (!this.maskCanvasRef) return;
                                 try {
@@ -2632,7 +2631,7 @@ Control Tabs on the Node:
                     if (node.isFullscreen) return;
 
                     const targetTag = e.target.tagName.toUpperCase();
-                    const isInteractive = ["BUTTON", "INPUT", "SELECT", "OPTION", "LABEL"].includes(targetTag) || e.target.closest("button") || e.target.closest("label") || e.target.id === "colorPick";
+                    const isInteractive = ["BUTTON", "INPUT", "SELECT", "OPTION", "LABEL"].includes(targetTag) || e.target.closest("button") || e.target.closest("label") || e.target.closest(".trix-custom-dropdown") || e.target.id === "colorPick";
                     const isScrollbar = e.target.clientWidth > 0 && (e.offsetX >= e.target.clientWidth || e.offsetY >= e.target.clientHeight);
 
                     if (isInteractive || isScrollbar) return; 
@@ -2687,6 +2686,504 @@ Control Tabs on the Node:
                     }
                 });
 
+                let _trixPickerCSSInjected = false;
+                const injectTrixImagePickerCSS = () => {
+                    if (_trixPickerCSSInjected) return;
+                    _trixPickerCSSInjected = true;
+                    const css = `
+                    .trix-li-popup {
+                        background: #18181c;
+                        border: 1px solid #383842;
+                        border-radius: 8px;
+                        box-shadow: 0 8px 28px rgba(0,0,0,0.65);
+                        font-size: 11px;
+                        font-family: var(--comfy-font-family, ui-sans-serif, system-ui, sans-serif);
+                        color: #ccc;
+                        overflow: hidden;
+                        box-sizing: border-box;
+                    }
+                    .trix-li-pop-search {
+                        display: flex;
+                        align-items: center;
+                        gap: 7px;
+                        padding: 7px 9px;
+                        background: #121215;
+                        border-bottom: 1px solid #2a2a32;
+                    }
+                    .trix-li-pop-mag {
+                        width: 12px;
+                        height: 12px;
+                        flex: none;
+                        border: 1.6px solid #777;
+                        border-radius: 50%;
+                        position: relative;
+                    }
+                    .trix-li-pop-mag::after {
+                        content: "";
+                        position: absolute;
+                        width: 5px;
+                        height: 1.6px;
+                        background: #777;
+                        transform: rotate(45deg);
+                        right: -3px;
+                        bottom: 0;
+                    }
+                    .trix-li-pop-search input {
+                        flex: 1;
+                        min-width: 0;
+                        background: transparent;
+                        border: none;
+                        outline: none;
+                        color: #eee;
+                        font-size: 11px;
+                        font-family: inherit;
+                    }
+                    .trix-li-pop-search input::placeholder { color: #777; }
+                    .trix-li-pop-sizetoggle {
+                        flex: none;
+                        display: flex;
+                        border: 1px solid #383842;
+                        border-radius: 4px;
+                        overflow: hidden;
+                    }
+                    .trix-li-pop-sizetoggle span {
+                        padding: 2px 7px;
+                        font-size: 10px;
+                        color: #aaa;
+                        cursor: pointer;
+                        user-select: none;
+                        line-height: 1.4;
+                    }
+                    .trix-li-pop-sizetoggle span.on {
+                        background: var(--trix-accent, #235a7a);
+                        color: #fff;
+                    }
+                    .trix-li-pop-sizetoggle span:not(.on):hover { color: #ddd; }
+                    .trix-li-bsplit {
+                        display: flex;
+                        max-height: 330px;
+                    }
+                    .trix-li-bfolders {
+                        width: 110px;
+                        flex: none;
+                        border-right: 1px solid #2a2a32;
+                        background: #121215;
+                        overflow-y: auto;
+                    }
+                    .trix-li-bfolder {
+                        padding: 7px 9px;
+                        font-size: 10.5px;
+                        color: #aaa;
+                        cursor: pointer;
+                        display: flex;
+                        justify-content: space-between;
+                        gap: 4px;
+                        align-items: center;
+                        user-select: none;
+                    }
+                    .trix-li-bfolder:hover { background: #222228; }
+                    .trix-li-bfolder.on {
+                        background: rgba(35, 90, 122, 0.35);
+                        color: #4db8ff;
+                        border-left: 3px solid #235a7a;
+                        padding-left: 6px;
+                        font-weight: 600;
+                    }
+                    .trix-li-bfolder.all {
+                        border-bottom: 1px solid #2a2a32;
+                        color: #ddd;
+                    }
+                    .trix-li-bfolder.all.on { color: #4db8ff; }
+                    .trix-li-bfolder-n { color: #777; font-size: 9px; flex: none; }
+                    .trix-li-bfolder > span:first-child {
+                        overflow: hidden;
+                        text-overflow: ellipsis;
+                        white-space: nowrap;
+                        min-width: 0;
+                    }
+                    .trix-li-bpane {
+                        flex: 1;
+                        min-width: 0;
+                        overflow-y: auto;
+                        max-height: 330px;
+                    }
+                    .trix-li-pop-sec {
+                        padding: 5px 10px 4px;
+                        font-size: 9px;
+                        color: #888;
+                        text-transform: uppercase;
+                        letter-spacing: .5px;
+                        background: #121215;
+                        border-bottom: 1px solid #2a2a32;
+                        display: flex;
+                        align-items: center;
+                        gap: 6px;
+                        position: sticky;
+                        top: 0;
+                        z-index: 1;
+                    }
+                    .trix-li-pop-sec-c { margin-left: auto; color: #777; }
+                    .trix-li-imgrow {
+                        display: flex;
+                        align-items: center;
+                        gap: 9px;
+                        padding: 5px 10px;
+                        cursor: pointer;
+                        user-select: none;
+                    }
+                    .trix-li-imgrow:hover { background: #23232a; }
+                    .trix-li-imgrow.cur { background: rgba(35, 90, 122, 0.3); }
+                    .trix-li-imgrow.cur .trix-li-imgrow-lbl { color: #4db8ff; font-weight: 600; }
+                    .trix-li-imgrow-lbl {
+                        flex: 1;
+                        min-width: 0;
+                        font-size: 11px;
+                        color: #ccc;
+                        overflow: hidden;
+                        text-overflow: ellipsis;
+                        white-space: nowrap;
+                    }
+                    .trix-li-pop-thumb {
+                        position: relative;
+                        flex: none;
+                        border-radius: 4px;
+                        overflow: hidden;
+                        background: linear-gradient(135deg, #2c3038, #18181c);
+                    }
+                    .trix-li-pop-thumb img {
+                        position: absolute;
+                        inset: 0;
+                        width: 100%;
+                        height: 100%;
+                        object-fit: cover;
+                        display: block;
+                    }
+                    .trix-li-pop-glyph {
+                        position: absolute;
+                        inset: 0;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        font-size: 10px;
+                        color: rgba(255,255,255,.3);
+                    }
+                    .trix-li-bsplit.thumb-sm .trix-li-pop-thumb { width: 32px; height: 32px; }
+                    .trix-li-bsplit.thumb-lg .trix-li-pop-thumb { width: 48px; height: 48px; }
+                    .trix-li-pop-empty { padding: 12px; color: #777; text-align: center; font-style: italic; }
+                    .trix-li-pop-foot {
+                        padding: 6px 10px;
+                        font-size: 9.5px;
+                        color: #777;
+                        background: #121215;
+                        border-top: 1px solid #2a2a32;
+                        text-align: center;
+                    }
+                    `;
+                    const style = document.createElement("style");
+                    style.id = "trix-image-picker-css";
+                    style.textContent = css;
+                    document.head.appendChild(style);
+                };
+
+                const trixSplitFilenameSubfolder = (full) => {
+                    if (!full) return { subfolder: "", filename: "" };
+                    const parts = String(full).replace(/\\/g, "/").split("/");
+                    const filename = parts.pop() || "";
+                    const subfolder = parts.join("/");
+                    return { subfolder, filename };
+                };
+
+                const trixGroupValuesByFolder = (values) => {
+                    const map = new Map();
+                    for (const v of values) {
+                        const { subfolder, filename } = trixSplitFilenameSubfolder(v);
+                        if (!map.has(subfolder)) map.set(subfolder, []);
+                        map.get(subfolder).push({ full: v, name: filename });
+                    }
+                    for (const list of map.values()) list.sort((a, b) => a.name.localeCompare(b.name));
+                    const folders = [...map.keys()].sort((a, b) => {
+                        if (a === "" && b !== "") return -1;
+                        if (a !== "" && b === "") return 1;
+                        return a.localeCompare(b);
+                    });
+                    return folders.map((folder) => ({ folder, files: map.get(folder) }));
+                };
+
+                const trixThumbURL = (full) => {
+                    const { subfolder, filename } = trixSplitFilenameSubfolder(full);
+                    return `/view?filename=${encodeURIComponent(filename)}&type=input&subfolder=${encodeURIComponent(subfolder)}`;
+                };
+
+                const getTrixThumbSize = () => {
+                    try {
+                        const v = localStorage.getItem("TrixLoader.ImagePicker.ThumbSize");
+                        return v === "Small" ? "Small" : "Large";
+                    } catch (_e) { return "Large"; }
+                };
+
+                const setTrixThumbSize = (v) => {
+                    try {
+                        localStorage.setItem("TrixLoader.ImagePicker.ThumbSize", v);
+                    } catch (_e) { /* ignore */ }
+                };
+
+                const openTrixImageDropdown = (node, anchorEl, onPick) => {
+                    injectTrixImagePickerCSS();
+                    const imageWidget = widgets.image;
+                    const values = imageChoices();
+
+                    const existing = document.querySelector(".trix-li-popup");
+                    if (existing) {
+                        if (typeof existing._trixClose === "function") existing._trixClose();
+                        else existing.remove();
+                    }
+
+                    const popup = document.createElement("div");
+                    popup.className = "trix-li-popup";
+                    const rect = anchorEl.getBoundingClientRect();
+                    const width = Math.max(rect.width, 360);
+                    Object.assign(popup.style, {
+                        position: "fixed",
+                        zIndex: 99999,
+                        left: `${rect.left}px`,
+                        top: `${rect.bottom + 2}px`,
+                        width: `${width}px`,
+                    });
+
+                    function closePopup() {
+                        popup.remove();
+                        document.removeEventListener("mousedown", onDocDown, true);
+                        document.removeEventListener("pointerdown", onDocDown, true);
+                        document.removeEventListener("wheel", onWheel, true);
+                        document.removeEventListener("keydown", onKey, true);
+                    }
+                    const onDocDown = (e) => { if (!popup.contains(e.target)) closePopup(); };
+                    const onWheel = (e) => { if (!popup.contains(e.target)) closePopup(); };
+                    const onKey = (e) => { if (e.key === "Escape") closePopup(); };
+                    popup._trixClose = closePopup;
+
+                    if (values.length === 0) {
+                        const empty = document.createElement("div");
+                        empty.className = "trix-li-pop-empty";
+                        empty.textContent = "(no images uploaded yet)";
+                        popup.appendChild(empty);
+                        document.body.appendChild(popup);
+                        setTimeout(() => {
+                            document.addEventListener("mousedown", onDocDown, true);
+                            document.addEventListener("pointerdown", onDocDown, true);
+                            document.addEventListener("wheel", onWheel, true);
+                            document.addEventListener("keydown", onKey, true);
+                        }, 0);
+                        return;
+                    }
+
+                    const groups = trixGroupValuesByFolder(values);
+                    const curVal = imageWidget ? imageWidget.value : "";
+                    const hasSubfolders = groups.some((g) => g.folder !== "");
+
+                    let activeFolder = "__all";
+                    let query = "";
+                    let thumbSize = getTrixThumbSize();
+                    let scrollTarget = null;
+
+                    const searchRow = document.createElement("div");
+                    searchRow.className = "trix-li-pop-search";
+                    const mag = document.createElement("span");
+                    mag.className = "trix-li-pop-mag";
+                    const input = document.createElement("input");
+                    input.type = "text";
+                    input.placeholder = "Filter images…";
+                    const sizeToggle = document.createElement("div");
+                    sizeToggle.className = "trix-li-pop-sizetoggle";
+                    const segS = document.createElement("span"); segS.textContent = "S"; segS.title = "Small thumbnails";
+                    const segL = document.createElement("span"); segL.textContent = "L"; segL.title = "Large thumbnails";
+                    sizeToggle.append(segS, segL);
+                    searchRow.append(mag, input, sizeToggle);
+                    popup.appendChild(searchRow);
+
+                    const body = document.createElement("div");
+                    body.className = "trix-li-bsplit";
+                    const sidebar = document.createElement("div");
+                    sidebar.className = "trix-li-bfolders";
+                    const pane = document.createElement("div");
+                    pane.className = "trix-li-bpane";
+                    if (hasSubfolders) body.append(sidebar, pane);
+                    else body.append(pane);
+                    popup.appendChild(body);
+
+                    const footer = document.createElement("div");
+                    footer.className = "trix-li-pop-foot";
+                    popup.appendChild(footer);
+
+                    const makeRow = (entry) => {
+                        const row = document.createElement("div");
+                        row.className = "trix-li-imgrow" + (entry.full === curVal ? " cur" : "");
+                        const th = document.createElement("span");
+                        th.className = "trix-li-pop-thumb";
+                        const glyph = document.createElement("span");
+                        glyph.className = "trix-li-pop-glyph";
+                        glyph.textContent = "▣";
+                        const img = document.createElement("img");
+                        img.loading = "lazy";
+                        img.onerror = () => { img.style.display = "none"; };
+                        img.src = trixThumbURL(entry.full);
+                        th.append(glyph, img);
+                        const lbl = document.createElement("span");
+                        lbl.className = "trix-li-imgrow-lbl";
+                        lbl.textContent = entry.name;
+                        lbl.title = entry.full;
+                        row.append(th, lbl);
+                        if (entry.full === curVal) scrollTarget = row;
+                        row.addEventListener("click", (e) => {
+                            e.stopPropagation();
+                            closePopup();
+                            if (onPick) onPick(entry.full);
+                        });
+                        return row;
+                    };
+
+                    const makeSec = (label, count) => {
+                        const s = document.createElement("div");
+                        s.className = "trix-li-pop-sec";
+                        s.textContent = label;
+                        const c = document.createElement("span");
+                        c.className = "trix-li-pop-sec-c";
+                        c.textContent = String(count);
+                        s.appendChild(c);
+                        return s;
+                    };
+
+                    const folderLabel = (key) => (key === "" ? "root" : key);
+                    const scrollCurrentIntoView = () => {
+                        if (!scrollTarget) return;
+                        const t = scrollTarget;
+                        queueMicrotask(() => { try { t.scrollIntoView({ block: "nearest" }); } catch (_e) {} });
+                    };
+
+                    const renderSidebar = () => {
+                        if (!hasSubfolders) return;
+                        sidebar.replaceChildren();
+                        const entries = [["__all", "All", values.length]];
+                        for (const g of groups) entries.push([g.folder, folderLabel(g.folder), g.files.length]);
+                        for (const [key, label, count] of entries) {
+                            const f = document.createElement("div");
+                            f.className = "trix-li-bfolder"
+                                + (key === "__all" ? " all" : "")
+                                + (key === activeFolder && !query.trim() ? " on" : "");
+                            const t = document.createElement("span");
+                            t.textContent = label;
+                            const n = document.createElement("span");
+                            n.className = "trix-li-bfolder-n";
+                            n.textContent = String(count);
+                            f.append(t, n);
+                            f.addEventListener("click", (e) => {
+                                e.stopPropagation();
+                                activeFolder = key;
+                                input.value = "";
+                                query = "";
+                                renderSidebar();
+                                renderPane();
+                            });
+                            sidebar.appendChild(f);
+                        }
+                    };
+
+                    const renderPane = () => {
+                        pane.replaceChildren();
+                        scrollTarget = null;
+                        const q = query.trim().toLowerCase();
+
+                        if (q) {
+                            let matches = 0;
+                            for (const g of groups) {
+                                const hit = g.files.filter((f) => f.name.toLowerCase().includes(q));
+                                if (hit.length === 0) continue;
+                                matches += hit.length;
+                                pane.appendChild(makeSec(folderLabel(g.folder), hit.length));
+                                for (const entry of hit) pane.appendChild(makeRow(entry));
+                            }
+                            if (matches === 0) {
+                                const none = document.createElement("div");
+                                none.className = "trix-li-pop-empty";
+                                none.textContent = "(no matches)";
+                                pane.appendChild(none);
+                            }
+                            footer.textContent = `${matches} match${matches === 1 ? "" : "es"}`;
+                            return;
+                        }
+
+                        if (!hasSubfolders) {
+                            for (const g of groups) for (const entry of g.files) pane.appendChild(makeRow(entry));
+                            footer.textContent = `${values.length} image${values.length === 1 ? "" : "s"}`;
+                            scrollCurrentIntoView();
+                            return;
+                        }
+
+                        if (activeFolder === "__all") {
+                            for (const g of groups) {
+                                pane.appendChild(makeSec(folderLabel(g.folder), g.files.length));
+                                for (const entry of g.files) pane.appendChild(makeRow(entry));
+                            }
+                            footer.textContent = `${values.length} image${values.length === 1 ? "" : "s"} · all`;
+                        } else {
+                            const g = groups.find((x) => x.folder === activeFolder);
+                            const files = g ? g.files : [];
+                            for (const entry of files) pane.appendChild(makeRow(entry));
+                            footer.textContent = `${files.length} image${files.length === 1 ? "" : "s"} · ${folderLabel(activeFolder)}`;
+                        }
+                        scrollCurrentIntoView();
+                    };
+
+                    const applyThumbSize = () => {
+                        body.classList.toggle("thumb-sm", thumbSize === "Small");
+                        body.classList.toggle("thumb-lg", thumbSize !== "Small");
+                        segS.classList.toggle("on", thumbSize === "Small");
+                        segL.classList.toggle("on", thumbSize !== "Small");
+                    };
+
+                    input.addEventListener("input", () => { query = input.value; renderSidebar(); renderPane(); });
+                    input.addEventListener("click", (e) => e.stopPropagation());
+                    input.addEventListener("keydown", (e) => {
+                        if (e.key === "Enter") {
+                            e.preventDefault();
+                            pane.querySelector(".trix-li-imgrow")?.click();
+                        }
+                        e.stopImmediatePropagation();
+                    });
+                    segS.addEventListener("click", (e) => {
+                        e.stopPropagation();
+                        thumbSize = "Small"; setTrixThumbSize(thumbSize); applyThumbSize();
+                    });
+                    segL.addEventListener("click", (e) => {
+                        e.stopPropagation();
+                        thumbSize = "Large"; setTrixThumbSize(thumbSize); applyThumbSize();
+                    });
+
+                    applyThumbSize();
+                    renderSidebar();
+                    renderPane();
+
+                    document.body.appendChild(popup);
+
+                    const pr = popup.getBoundingClientRect();
+                    let left = rect.left;
+                    if (left + pr.width > window.innerWidth - 4) left = Math.max(4, window.innerWidth - pr.width - 4);
+                    popup.style.left = `${left}px`;
+                    if (pr.bottom > window.innerHeight - 4) {
+                        const above = rect.top - pr.height - 2;
+                        popup.style.top = `${above >= 4 ? above : Math.max(4, window.innerHeight - pr.height - 4)}px`;
+                    }
+
+                    queueMicrotask(() => { try { input.focus(); } catch (_e) {} });
+
+                    setTimeout(() => {
+                        document.addEventListener("mousedown", onDocDown, true);
+                        document.addEventListener("pointerdown", onDocDown, true);
+                        document.addEventListener("wheel", onWheel, true);
+                        document.addEventListener("keydown", onKey, true);
+                    }, 0);
+                };
+
                 const headerContainer = document.createElement("div");
                 headerContainer.style.cssText = `display: flex; flex-direction: column; width: 100%; pointer-events: auto; z-index: 10; margin-top: ${TRIX_HEADER_OFFSET_Y}px; box-sizing: border-box; background: var(--trix-bg);`;
                 node.headerContainerRef = headerContainer;
@@ -2723,7 +3220,9 @@ Control Tabs on the Node:
                     try {
                         if (node._uploadBtnRef) {
                             node._uploadBtnRef.disabled = true;
-                            node._uploadBtnRef.querySelector("span").textContent = "Uploading...";
+                            node._uploadBtnRef.style.opacity = "0.5";
+                            const span = node._uploadBtnRef.querySelector("span");
+                            if (span) span.textContent = "Uploading...";
                         }
                         const resp = await fetch("/upload/image", { method: "POST", body });
                         if (resp.status !== 200) throw new Error(`Upload failed: ${resp.status}`);
@@ -2738,7 +3237,9 @@ Control Tabs on the Node:
                     } finally {
                         if (node._uploadBtnRef) {
                             node._uploadBtnRef.disabled = false;
-                            node._uploadBtnRef.querySelector("span").textContent = "Upload Image";
+                            node._uploadBtnRef.style.opacity = "1";
+                            const span = node._uploadBtnRef.querySelector("span");
+                            if (span) span.textContent = "Upload Image";
                         }
                     }
                 };
@@ -2746,40 +3247,162 @@ Control Tabs on the Node:
 
                 const filePanel = document.createElement("div");
                 filePanel.className = "trix-file-panel";
-                filePanel.style.cssText = `display: flex; flex-direction: column; gap: 6px; width: 100%; background: var(--trix-bg); padding: 4px 6px; box-sizing: border-box; border-radius: 6px 6px 0 0; border-bottom: 1px solid var(--trix-control); position: relative; isolation: isolate;`;
+                filePanel.style.cssText = `display: flex; flex-direction: column; gap: 0px; width: 100%; background: var(--trix-bg); padding: 4px 6px; box-sizing: border-box; border-radius: 6px 6px 0 0; border-bottom: 1px solid var(--trix-control); position: relative; isolation: isolate;`;
 
                 const filePanelTopShield = document.createElement("div");
                 filePanelTopShield.className = "trix-file-panel-top-shield";
                 filePanelTopShield.style.cssText = `position: absolute; left: 0; right: 0; top: -4px; height: 4px; background: var(--trix-bg); border-radius: 6px 6px 0 0; pointer-events: none; z-index: 0;`;
 
-                const pickerRow = document.createElement("div");
-                pickerRow.style.cssText = "display: grid; grid-template-columns: 24px minmax(0, 1fr) 24px; gap: 4px; align-items: center; width: 100%; position: relative; z-index: 1;";
+                const filePanelRow = document.createElement("div");
+                filePanelRow.style.cssText = "display: grid; grid-template-columns: 24px 24px minmax(0, 1fr) 24px; gap: 4px; align-items: center; width: 100%; position: relative; z-index: 1;";
 
-                const pickerBtnStyle = `height: 22px; border: 1px solid var(--trix-border); border-radius: 5px; background: var(--trix-control); color: var(--trix-icon); cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; line-height: 1; transition: 0.15s;`;
+                const headerToolBtnStyle = `height: 22px; width: 24px; border: 1px solid var(--trix-border); border-radius: 5px; background: var(--trix-control); color: var(--trix-text); cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; line-height: 1; font-size: 13.5px; transition: 0.15s; user-select: none;`;
+
+                const copyImageHeaderBtn = document.createElement("button");
+                copyImageHeaderBtn.textContent = "🗐";
+                copyImageHeaderBtn.title = "Copy Image";
+                copyImageHeaderBtn.style.cssText = headerToolBtnStyle;
+                copyImageHeaderBtn.onmouseenter = () => { copyImageHeaderBtn.style.background = "var(--trix-control-hover)"; copyImageHeaderBtn.style.borderColor = "var(--trix-accent)"; };
+                copyImageHeaderBtn.onmouseleave = () => { copyImageHeaderBtn.style.background = "var(--trix-control)"; copyImageHeaderBtn.style.borderColor = "var(--trix-border)"; };
+                copyImageHeaderBtn.onclick = (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    let srcImg = null;
+                    if (node.image && node.image.complete && node.image.naturalWidth > 0) srcImg = node.image;
+                    else if (node.imgs && node.imgs[0] && node.imgs[0].complete && node.imgs[0].naturalWidth > 0) srcImg = node.imgs[0];
+                    else if (node.imgTagRef && node.imgTagRef.complete && node.imgTagRef.naturalWidth > 0) srcImg = node.imgTagRef;
+                    
+                    const doCopy = (imgElement) => {
+                        try {
+                            const tCanvas = document.createElement("canvas");
+                            tCanvas.width = imgElement.naturalWidth || imgElement.width;
+                            tCanvas.height = imgElement.naturalHeight || imgElement.height;
+                            const tCtx = tCanvas.getContext("2d");
+                            tCtx.drawImage(imgElement, 0, 0);
+                            tCanvas.toBlob(async (blob) => {
+                                if (blob) {
+                                    await navigator.clipboard.write([
+                                        new ClipboardItem({ "image/png": blob })
+                                    ]);
+                                }
+                            }, "image/png");
+                        } catch (err) {
+                            console.error("TrixLoader Copy Image Error:", err);
+                            alert("Failed to copy image: " + err);
+                        }
+                    };
+                    
+                    if (srcImg) {
+                        doCopy(srcImg);
+                    } else if (widgets.image && widgets.image.value) {
+                        const tempImg = new Image();
+                        tempImg.crossOrigin = "anonymous";
+                        tempImg.onload = () => doCopy(tempImg);
+                        tempImg.onerror = () => alert("Failed to load image for copying.");
+                        tempImg.src = `/view?filename=${encodeURIComponent(widgets.image.value)}&type=input`;
+                    } else {
+                        alert("No image available to copy.");
+                    }
+                };
+
+                const pasteImageHeaderBtn = document.createElement("button");
+                pasteImageHeaderBtn.innerHTML = svgPaste;
+                pasteImageHeaderBtn.title = "Paste Image";
+                pasteImageHeaderBtn.style.cssText = headerToolBtnStyle;
+                pasteImageHeaderBtn.onmouseenter = () => { pasteImageHeaderBtn.style.background = "var(--trix-control-hover)"; pasteImageHeaderBtn.style.borderColor = "var(--trix-accent)"; };
+                pasteImageHeaderBtn.onmouseleave = () => { pasteImageHeaderBtn.style.background = "var(--trix-control)"; pasteImageHeaderBtn.style.borderColor = "var(--trix-border)"; };
+                pasteImageHeaderBtn.onclick = async (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    try {
+                        const items = await navigator.clipboard.read();
+                        for (let item of items) {
+                            if (item.types.some(t => t.startsWith('image/'))) {
+                                const blob = await item.getType(item.types.find(t => t.startsWith('image/')));
+                                let ext = ".png";
+                                if (blob.type === "image/jpeg") ext = ".jpg";
+                                else if (blob.type === "image/webp") ext = ".webp";
+                                
+                                const filename = `pasted_${node.id}_${Date.now()}${ext}`;
+                                const newFile = new File([blob], filename, { type: blob.type || "image/png" });
+                                
+                                const body = new FormData();
+                                body.append("image", newFile, filename);
+                                body.append("type", "input");
+                                body.append("overwrite", "true");
+                                
+                                const resp = await fetch("/upload/image", { method: "POST", body });
+                                if (resp.status === 200) {
+                                    const data = await resp.json();
+                                    const finalName = trixDefaultUploadFullPath(data);
+                                    setImageWidgetValue(finalName);
+                                } else {
+                                    alert(`Failed to upload pasted image: ${resp.status}`);
+                                }
+                                return;
+                            }
+                        }
+                        alert("Clipboard does not contain an image.");
+                    } catch (err) {
+                        console.error("TrixLoader Paste Image Error:", err);
+                        alert("Failed to paste image: " + err);
+                    }
+                };
+
+                const segmentPicker = document.createElement("div");
+                segmentPicker.className = "trix-segment-picker";
+                segmentPicker.style.cssText = "display: flex; align-items: center; width: 100%; min-width: 0; height: 22px; border: 1px solid var(--trix-border); border-radius: 5px; background: var(--trix-control); overflow: hidden; box-sizing: border-box; transition: 0.15s;";
+
+                const segmentBtnStyle = "height: 100%; width: 22px; border: none; background: transparent; color: var(--trix-icon); cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; line-height: 1; flex-shrink: 0; transition: 0.15s; user-select: none;";
+
                 const prevImageBtn = document.createElement("button");
                 prevImageBtn.innerHTML = svgChevronLeft;
                 prevImageBtn.title = "Previous image";
-                prevImageBtn.style.cssText = pickerBtnStyle;
+                prevImageBtn.style.cssText = segmentBtnStyle + " border-right: 1px solid var(--trix-border);";
                 prevImageBtn.onmouseenter = () => { prevImageBtn.style.background = "var(--trix-control-hover)"; prevImageBtn.style.color = "var(--trix-text)"; };
-                prevImageBtn.onmouseleave = () => { prevImageBtn.style.background = "var(--trix-control)"; prevImageBtn.style.color = "var(--trix-icon)"; };
+                prevImageBtn.onmouseleave = () => { prevImageBtn.style.background = "transparent"; prevImageBtn.style.color = "var(--trix-icon)"; };
 
                 const nextImageBtn = document.createElement("button");
                 nextImageBtn.innerHTML = svgChevronRight;
                 nextImageBtn.title = "Next image";
-                nextImageBtn.style.cssText = pickerBtnStyle;
+                nextImageBtn.style.cssText = segmentBtnStyle + " border-left: 1px solid var(--trix-border);";
                 nextImageBtn.onmouseenter = () => { nextImageBtn.style.background = "var(--trix-control-hover)"; nextImageBtn.style.color = "var(--trix-text)"; };
-                nextImageBtn.onmouseleave = () => { nextImageBtn.style.background = "var(--trix-control)"; nextImageBtn.style.color = "var(--trix-icon)"; };
+                nextImageBtn.onmouseleave = () => { nextImageBtn.style.background = "transparent"; nextImageBtn.style.color = "var(--trix-icon)"; };
 
-                const imageSelect = document.createElement("select");
-                imageSelect.title = "Selected image";
-                imageSelect.style.cssText = `height: 22px; width: 100%; min-width: 0; background: var(--trix-control); color: var(--trix-text); border: 1px solid var(--trix-border); border-radius: 5px; padding: 0 8px; font-size: 11px; font-family: var(--comfy-font-family, sans-serif); outline: none; cursor: pointer; box-sizing: border-box;`;
+                const dropdownBtn = document.createElement("div");
+                dropdownBtn.className = "trix-custom-dropdown";
+                dropdownBtn.title = "Click to select image";
+                dropdownBtn.style.cssText = `height: 100%; flex: 1; min-width: 0; background: transparent; color: var(--trix-text); padding: 0 8px; font-size: 11px; font-family: var(--comfy-font-family, sans-serif); outline: none; cursor: pointer; box-sizing: border-box; display: flex; align-items: center; justify-content: space-between; user-select: none; transition: 0.15s; position: relative; z-index: 5;`;
 
-                const uploadRow = document.createElement("div");
-                uploadRow.style.cssText = "display: grid; grid-template-columns: 1fr; width: 100%; position: relative; z-index: 1;";
+                const dropdownName = document.createElement("span");
+                dropdownName.style.cssText = "overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; pointer-events: none;";
+
+                const dropdownCounter = document.createElement("span");
+                dropdownCounter.style.cssText = "color: var(--trix-icon); font-size: 9.5px; margin-left: 6px; flex-shrink: 0; pointer-events: none;";
+
+                dropdownBtn.append(dropdownName, dropdownCounter);
+
+                dropdownBtn.onmouseenter = () => { dropdownBtn.style.background = "var(--trix-control-hover)"; };
+                dropdownBtn.onmouseleave = () => { dropdownBtn.style.background = "transparent"; };
+
+                const triggerImageDropdown = (e) => {
+                    if (e) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                    }
+                    openTrixImageDropdown(node, dropdownBtn, (pickedVal) => setImageWidgetValue(pickedVal));
+                };
+
+                dropdownBtn.onpointerdown = (e) => { e.preventDefault(); e.stopPropagation(); };
+                dropdownBtn.onmousedown = (e) => { e.preventDefault(); e.stopPropagation(); };
+                dropdownBtn.onclick = triggerImageDropdown;
+
+                segmentPicker.append(prevImageBtn, dropdownBtn, nextImageBtn);
 
                 const uploadBtn = document.createElement("button");
-                uploadBtn.innerHTML = `${svgUpload}<span>Upload Image</span>`;
-                uploadBtn.style.cssText = `height: 20px; width: 100%; background: var(--trix-accent); color: var(--trix-text); border: none; border-radius: 5px; cursor: pointer; font-size: 10.5px; font-weight: 700; display: flex; align-items: center; justify-content: center; gap: 6px; box-shadow: none; transition: 0.15s ease;`;
+                uploadBtn.innerHTML = `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="display: block;"><path d="M12 3v12"></path><path d="m7 8 5-5 5 5"></path><path d="M5 21h14"></path><path d="M5 17v4"></path><path d="M19 17v4"></path></svg>`;
+                uploadBtn.title = "Upload Image";
+                uploadBtn.style.cssText = `height: 22px; width: 24px; background: var(--trix-accent); color: #ffffff; border: none; border-radius: 5px; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; box-shadow: none; transition: 0.15s ease; user-select: none;`;
                 uploadBtn.onmouseenter = () => { uploadBtn.style.background = "var(--trix-accent-hover)"; };
                 uploadBtn.onmouseleave = () => { uploadBtn.style.background = "var(--trix-accent)"; };
                 node._uploadBtnRef = uploadBtn;
@@ -2792,29 +3415,11 @@ Control Tabs on the Node:
                 const refreshImagePicker = () => {
                     const current = widgets.image ? widgets.image.value : "";
                     const values = imageChoices();
-                    imageSelect.innerHTML = "";
-                    if (values.length === 0) {
-                        const opt = document.createElement("option");
-                        opt.value = "";
-                        opt.textContent = "No image selected";
-                        imageSelect.appendChild(opt);
-                    } else {
-                        values.forEach((value) => {
-                            const opt = document.createElement("option");
-                            opt.value = value;
-                            opt.textContent = value;
-                            imageSelect.appendChild(opt);
-                        });
-                    }
-                    if (current) {
-                        if (![...imageSelect.options].some((opt) => opt.value === current)) {
-                            const opt = document.createElement("option");
-                            opt.value = current;
-                            opt.textContent = current;
-                            imageSelect.insertBefore(opt, imageSelect.firstChild);
-                        }
-                        imageSelect.value = current;
-                    }
+                    const { filename } = trixSplitFilenameSubfolder(current);
+                    dropdownName.textContent = filename || current || "No image selected";
+                    dropdownName.title = current;
+                    const idx = values.indexOf(current);
+                    dropdownCounter.textContent = values.length > 0 ? `${idx >= 0 ? idx + 1 : 1}/${values.length} ▾` : "▾";
                 };
                 node.refreshImagePickerRef = refreshImagePicker;
 
@@ -2828,7 +3433,6 @@ Control Tabs on the Node:
 
                 prevImageBtn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); stepImage(-1); };
                 nextImageBtn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); stepImage(1); };
-                imageSelect.onchange = () => setImageWidgetValue(imageSelect.value);
                 uploadBtn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); fileInput.click(); };
                 fileInput.onchange = async () => {
                     const file = fileInput.files && fileInput.files[0];
@@ -2836,10 +3440,10 @@ Control Tabs on the Node:
                     fileInput.value = "";
                 };
 
-                pickerRow.append(prevImageBtn, imageSelect, nextImageBtn);
-                uploadRow.append(uploadBtn, fileInput);
-                filePanel.append(filePanelTopShield, pickerRow, uploadRow);
+                filePanelRow.append(copyImageHeaderBtn, pasteImageHeaderBtn, segmentPicker, uploadBtn, fileInput);
+                filePanel.append(filePanelTopShield, filePanelRow);
                 headerContainer.appendChild(filePanel);
+                refreshImagePicker();
 
                 const hasImageDrag = (event) => {
                     const dt = event.dataTransfer;
@@ -3225,6 +3829,7 @@ Control Tabs on the Node:
                 const svgRedoMask = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="${iconStyle}"><polyline points="15 14 20 9 15 4"></polyline><path d="M4 20v-7a4 4 0 0 1 4-4h12"></path></svg>`;
                 const svgEraserMask = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="${iconStyle}"><path d="M20 20H7L3 16C2.5 15.5 2.5 14.5 3 14L13 4C13.5 3.5 14.5 3.5 15 4L20 9C20.5 9.5 20.5 10.5 20 11L11 20H20V20Z"></path><line x1="17" y1="14" x2="10" y2="7"></line></svg>`;
                 const svgClearMask = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="${iconStyle}"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>`;
+                const svgResetCR = `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 2v6h6"></path><path d="M3 8a9 9 0 1 0 2.64-4.64L3 6"></path></svg>`;
 
                 const toggleMaskBtn = createBtn(svgEyeMask, "Hold to hide mask");
                 toggleMaskBtn.onpointerdown = (e) => { node._isMaskHidden = true; if (node.isFullscreen) maskCanvas.style.opacity = "0"; if (app.graph) app.graph.setDirtyCanvas(true, true); };
@@ -4317,6 +4922,79 @@ Control Tabs on the Node:
                 cameraRawPanel.style.cssText = `display: none; flex-direction: column; width: 100%; height: 100%; padding: 4px 8px; box-sizing: border-box; overflow-y: auto; overflow-x: hidden; pointer-events: auto; background: var(--trix-panel-soft); min-height: 0;`;
 
                 const crEnableRow = createToggleRow("Enable Settings", "cr_enable");
+
+                // --- Reset All button (same row as Enable Settings) ---
+                const crResetBtn = document.createElement("button");
+                crResetBtn.innerText = "↺ Reset All";
+                crResetBtn.title = "Reset all filter parameters to defaults";
+                crResetBtn.style.cssText = `background: #3a1a1a; color: #e88; border: 1px solid #5a2a2a; border-radius: 4px; padding: 2px 8px; cursor: pointer; font-size: 10px; font-weight: bold; white-space: nowrap; flex-shrink: 0; transition: background 0.15s; margin-left: 6px;`;
+                crResetBtn.onmouseenter = () => { crResetBtn.style.background = "#5a2020"; crResetBtn.style.color = "#ffaaaa"; };
+                crResetBtn.onmouseleave = () => { crResetBtn.style.background = "#3a1a1a"; crResetBtn.style.color = "#e88"; };
+                crResetBtn.addEventListener("mousedown", (e) => e.stopPropagation());
+                crResetBtn.addEventListener("pointerdown", (e) => e.stopPropagation());
+                crResetBtn.onclick = () => {
+                    // Default values for all CR state parameters (mirror of defaultCrState in trix_camera_raw.js)
+                    const crDefaults = {
+                        cr_offset: 0, cr_exp: 0, cr_cont: 0, cr_high: 0, cr_shad: 0, cr_white: 0, cr_black: 0,
+                        cr_temp: 0, cr_tint: 0, cr_vibrance: 0, cr_colorfulness: 0, cr_sat: 0,
+                        cr_tex: 0, cr_clar: 0, cr_dehz: 0, cr_sharp: 0, cr_denoise: 0,
+                        cr_blur: 0, cr_surface_blur: 0, cr_grain: 0, cr_vignette: 0,
+                        cr_sketch_kernel_size: 0, cr_sketch_sigma: 1.4, cr_sketch_k_sigma: 1.6,
+                        cr_sketch_epsilon: -0.03, cr_sketch_phi: 10.0, cr_sketch_gamma: 1.0, cr_sketch_color: 'gray',
+                        cr_pixel_colors: 128, cr_pixel_dot_size: 0, cr_pixel_outline: 0, cr_pixel_smoothing: 0, cr_pixel_algo: 'kmeans',
+                        cr_blur_radius: 0, cr_blur_mode: 'Gaussian',
+                        cr_ht_size: 0, cr_ht_angle: 15, cr_ht_contrast: 0, cr_ht_brightness: 0, cr_ht_dither: 100, cr_ht_inverse: false, cr_ht_shape: 'Dot',
+                        cr_usm_amount: 0, cr_usm_radius: 1, cr_usm_threshold: 0,
+                        cr_lap_amount: 0, cr_lap_kernel: '8-neighbor',
+                        cr_cf_hue: 0, cr_cf_density: 0, cr_cf_preserve: 50,
+                        cr_post_enable: false, cr_post_levels: 4, cr_post_mode: 'RGB', cr_post_dither_mode: 'None', cr_post_dither: 0,
+                        cr_lvl_channel: 'rgb', cr_lvl_in_black: 0, cr_lvl_in_white: 255, cr_lvl_gamma: 1.0, cr_lvl_out_black: 0, cr_lvl_out_white: 255,
+                        cr_cb_shad_r: 0, cr_cb_shad_g: 0, cr_cb_shad_b: 0,
+                        cr_cb_mid_r: 0, cr_cb_mid_g: 0, cr_cb_mid_b: 0,
+                        cr_cb_high_r: 0, cr_cb_high_g: 0, cr_cb_high_b: 0
+                    };
+                    // Reset all CR widgets
+                    for (const [key, val] of Object.entries(crDefaults)) {
+                        const w = getW(key);
+                        if (w) w.value = val;
+                    }
+                    // Reset HSL — write full default state (matching defaultHslState in trix_camera_raw.js)
+                    const defaultHsl = {
+                        colorize: false, activeChannel: 'master',
+                        master:   { h: 0, s: 0, l: 0 },
+                        reds:     { h: 0, s: 0, l: 0, center: 0,   width: 60 },
+                        yellows:  { h: 0, s: 0, l: 0, center: 60,  width: 60 },
+                        greens:   { h: 0, s: 0, l: 0, center: 120, width: 60 },
+                        cyans:    { h: 0, s: 0, l: 0, center: 180, width: 60 },
+                        blues:    { h: 0, s: 0, l: 0, center: 240, width: 60 },
+                        magentas: { h: 0, s: 0, l: 0, center: 300, width: 60 }
+                    };
+                    const wHslData = getW("hsl_data");
+                    if (wHslData) wHslData.value = JSON.stringify(defaultHsl);
+                    const wHslActive = getW("hsl_active");
+                    if (wHslActive) wHslActive.value = false;
+                    // Reset Curves — write full default state (matching defaultCurvesState in trix_camera_raw.js)
+                    const defaultCurves = {
+                        activeChannel: 'rgb',
+                        rgb: [{x:0,y:0},{x:255,y:255}],
+                        r:   [{x:0,y:0},{x:255,y:255}],
+                        g:   [{x:0,y:0},{x:255,y:255}],
+                        b:   [{x:0,y:0},{x:255,y:255}]
+                    };
+                    const wCurveData = getW("curve_data");
+                    if (wCurveData) wCurveData.value = JSON.stringify(defaultCurves);
+                    const wCurveActive = getW("curve_active");
+                    if (wCurveActive) wCurveActive.value = false;
+                    // Reset node cached layer properties (so Live Camera Raw opens fresh)
+                    if (node.properties) {
+                        delete node.properties.trix_layers;
+                        delete node.properties.trix_layers_mode;
+                    }
+                    // Sync all UI elements: sliders, wheels, triangles, toggles
+                    if (node.syncHTMLRef) node.syncHTMLRef();
+                    if (app.graph) app.graph.setDirtyCanvas(true, true);
+                };
+                crEnableRow.appendChild(crResetBtn);
                 cameraRawPanel.appendChild(crEnableRow);
 
                 const openCRBtn = document.createElement("button");
@@ -4329,73 +5007,1419 @@ Control Tabs on the Node:
                 };
                 cameraRawPanel.appendChild(openCRBtn);
 
-                const hslStatusBtn = document.createElement("button");
-                hslStatusBtn.innerText = "Hue/Saturation: Inactive";
-                hslStatusBtn.style.cssText = "background: transparent; color: var(--trix-icon); border: 1px solid var(--trix-border); border-radius: 4px; padding: 4px; font-size: 10px; font-weight: bold; width: 100%; pointer-events: none;";
 
-                const curveStatusBtn = document.createElement("button");
-                curveStatusBtn.innerText = "Curves: Inactive";
-                curveStatusBtn.style.cssText = "background: transparent; color: var(--trix-icon); border: 1px solid var(--trix-border); border-radius: 4px; padding: 4px; font-size: 10px; font-weight: bold; width: 100%; pointer-events: none;";
 
-                const statusRow = document.createElement("div");
-                statusRow.style.cssText = "display: flex; gap: 6px; width: 100%; margin-bottom: 6px;";
-                statusRow.append(hslStatusBtn, curveStatusBtn);
-                cameraRawPanel.appendChild(statusRow);
+                let _aioColorWheelCanvas = null;
+                const getAioColorWheelCanvas = () => {
+                    if (_aioColorWheelCanvas) return _aioColorWheelCanvas;
+                    const sz = 150;
+                    const c = document.createElement('canvas');
+                    c.width = sz; c.height = sz;
+                    const cx = c.getContext('2d');
+                    const img = cx.createImageData(sz, sz);
+                    const cc = sz / 2, rmax = sz / 2 - 1;
+                    for (let y = 0; y < sz; y++) {
+                        for (let x = 0; x < sz; x++) {
+                            const dx = x - cc, dy = y - cc;
+                            const dist = Math.sqrt(dx * dx + dy * dy);
+                            const idx = (y * sz + x) * 4;
+                            if (dist > rmax) { img.data[idx + 3] = 0; continue; }
+                            const ang = Math.atan2(dx, -dy);
+                            let hue = ((ang * 180 / Math.PI) + 360) % 360;
+                            const sat = dist / rmax;
+                            const hp = hue / 60;
+                            const cVal = sat;
+                            const xVal = cVal * (1 - Math.abs((hp % 2) - 1));
+                            let r1=0, g1=0, b1=0;
+                            if (hp>=0 && hp<1) { r1=cVal; g1=xVal; }
+                            else if (hp>=1 && hp<2) { r1=xVal; g1=cVal; }
+                            else if (hp>=2 && hp<3) { g1=cVal; b1=xVal; }
+                            else if (hp>=3 && hp<4) { g1=xVal; b1=cVal; }
+                            else if (hp>=4 && hp<5) { r1=xVal; b1=cVal; }
+                            else { r1=cVal; b1=xVal; }
+                            const m = 0;
+                            img.data[idx] = Math.round((r1+m)*255);
+                            img.data[idx+1] = Math.round((g1+m)*255);
+                            img.data[idx+2] = Math.round((b1+m)*255);
+                            img.data[idx+3] = 255;
+                        }
+                    }
+                    cx.putImageData(img, 0, 0);
+                    _aioColorWheelCanvas = c;
+                    return c;
+                };
+
+                let _aioCbDiscCanvas = null;
+                const getAioCbDiscCanvas = () => {
+                    if (_aioCbDiscCanvas) return _aioCbDiscCanvas;
+                    const sz = 76;
+                    const c = document.createElement('canvas');
+                    c.width = sz; c.height = sz;
+                    const cx = c.getContext('2d');
+                    const img = cx.createImageData(sz, sz);
+                    const cc = sz / 2, rmax = sz / 2 - 1;
+                    for (let y = 0; y < sz; y++) {
+                        for (let x = 0; x < sz; x++) {
+                            const dx = x - cc, dy = y - cc;
+                            const dist = Math.sqrt(dx * dx + dy * dy);
+                            const idx = (y * sz + x) * 4;
+                            if (dist > rmax) { img.data[idx + 3] = 0; continue; }
+                            const ang = Math.atan2(dx, -dy);
+                            let hue = ((ang * 180 / Math.PI) + 360) % 360;
+                            const sat = dist / rmax;
+                            const hp = hue / 60;
+                            const cVal = sat;
+                            const xVal = cVal * (1 - Math.abs((hp % 2) - 1));
+                            let r1=0, g1=0, b1=0;
+                            if (hp>=0 && hp<1) { r1=cVal; g1=xVal; }
+                            else if (hp>=1 && hp<2) { r1=xVal; g1=cVal; }
+                            else if (hp>=2 && hp<3) { g1=cVal; b1=xVal; }
+                            else if (hp>=3 && hp<4) { g1=xVal; b1=cVal; }
+                            else if (hp>=4 && hp<5) { r1=xVal; b1=cVal; }
+                            else { r1=cVal; b1=xVal; }
+                            const m = 1 - cVal;
+                            img.data[idx] = Math.round((r1+m)*255);
+                            img.data[idx+1] = Math.round((g1+m)*255);
+                            img.data[idx+2] = Math.round((b1+m)*255);
+                            img.data[idx+3] = 255;
+                        }
+                    }
+                    cx.putImageData(img, 0, 0);
+                    _aioCbDiscCanvas = c;
+                    return c;
+                };
+
+                const getAioBaseImgData = () => {
+                    if (!node.imgTagRef || !node.imgTagRef.naturalWidth) return null;
+                    const c = document.createElement("canvas");
+                    c.width = 64; c.height = 64;
+                    const cx = c.getContext("2d");
+                    cx.drawImage(node.imgTagRef, 0, 0, 64, 64);
+                    try {
+                        return cx.getImageData(0, 0, 64, 64).data;
+                    } catch(e) {
+                        return null;
+                    }
+                };
+
+                const drawCfWheelRefs = [];
+                const drawLevelsBarRefs = [];
+                const drawCbWheelsRefs = [];
+                const drawHtDialRefs = [];
+
+                const drawAioHtDial = (htAngleCanvas) => {
+                    const ctx = htAngleCanvas.getContext("2d");
+                    ctx.clearRect(0, 0, 300, 86);
+                    const cx = 150, cy = 43, r = 36;
+                    
+                    // Disc background
+                    ctx.fillStyle = '#ccc';
+                    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+                    
+                    ctx.strokeStyle = '#333';
+                    ctx.lineWidth = 1.5;
+                    ctx.stroke();
+                    
+                    // Line indicator
+                    const angDeg = parseFloat(getW('cr_ht_angle')?.value ?? 15);
+                    const ang = angDeg * Math.PI / 180;
+                    const tipX = cx + Math.cos(ang) * (r - 2);
+                    const tipY = cy + Math.sin(ang) * (r - 2);
+                    
+                    ctx.strokeStyle = '#000';
+                    ctx.lineWidth = 2.5;
+                    ctx.beginPath();
+                    ctx.moveTo(cx, cy);
+                    ctx.lineTo(tipX, tipY);
+                    ctx.stroke();
+                    
+                    // Center dot
+                    ctx.fillStyle = '#000';
+                    ctx.beginPath(); ctx.arc(cx, cy, 3.5, 0, Math.PI * 2); ctx.fill();
+                };
+
+                const aioHtPickAngle = (e, htAngleCanvas) => {
+                    const rect = htAngleCanvas.getBoundingClientRect();
+                    const scaleX = htAngleCanvas.width / rect.width;
+                    const scaleY = htAngleCanvas.height / rect.height;
+                    const mouseX = (e.clientX - rect.left) * scaleX;
+                    const mouseY = (e.clientY - rect.top) * scaleY;
+                    const dx = mouseX - 150;
+                    const dy = mouseY - 43;
+                    if (dx === 0 && dy === 0) return;
+                    let angDeg = Math.atan2(dy, dx) * 180 / Math.PI;
+                    angDeg = Math.round(angDeg);
+                    const wAngle = getW('cr_ht_angle');
+                    if (wAngle) wAngle.value = angDeg;
+
+                    drawHtDialRefs.forEach(ref => ref());
+                    updateGroupActiveColors();
+                    if (app.graph) app.graph.setDirtyCanvas(true, true);
+                };
+
+                const drawAioCfWheel = (cfWheel) => {
+                    const wCtx = cfWheel.getContext('2d');
+                    const src = getAioColorWheelCanvas();
+                    wCtx.clearRect(0, 0, 150, 150);
+                    wCtx.drawImage(src, 0, 0, 150, 150);
+                    
+                    const density = parseFloat(getW('cr_cf_density')?.value || 0);
+                    const hue = parseFloat(getW('cr_cf_hue')?.value || 0);
+                    const ang = ((hue - 90 + 360) % 360) * Math.PI / 180;
+                    const r = (density / 255) * 73;
+                    const cx = 75 + Math.cos(ang) * r;
+                    const cy = 75 + Math.sin(ang) * r;
+                    
+                    wCtx.lineWidth = 2.5; wCtx.strokeStyle = '#000';
+                    wCtx.beginPath(); wCtx.arc(cx, cy, 4.5, 0, Math.PI * 2); wCtx.stroke();
+                    wCtx.lineWidth = 1.5; wCtx.strokeStyle = '#fff';
+                    wCtx.beginPath(); wCtx.arc(cx, cy, 4.5, 0, Math.PI * 2); wCtx.stroke();
+                };
+
+                const aioCfPickFromWheel = (e, cfWheel) => {
+                    const rect = cfWheel.getBoundingClientRect();
+                    const mx = ((e.clientX - rect.left) / rect.width) * cfWheel.width - 75;
+                    const my = ((e.clientY - rect.top) / rect.height) * cfWheel.height - 75;
+                    const dist = Math.sqrt(mx * mx + my * my);
+                    
+                    let hue = 0;
+                    let density = 0;
+                    if (dist > 0.1) {
+                        const ang = Math.atan2(my, mx);
+                        hue = Math.round((ang * 180 / Math.PI + 90 + 360) % 360);
+                        density = Math.min(255, Math.round((dist / 73) * 255));
+                    }
+                    
+                    const wHue = getW('cr_cf_hue');
+                    const wDens = getW('cr_cf_density');
+                    if (wHue) wHue.value = hue;
+                    if (wDens) wDens.value = density;
+                    
+                    drawAioCfWheel(cfWheel);
+                    updateGroupActiveColors();
+                    if(app.graph) app.graph.setDirtyCanvas(true, true);
+                };
+
+                const drawAioLevelsBar = (lvlCanvas) => {
+                    const lCtx = lvlCanvas.getContext("2d");
+                    lCtx.clearRect(0, 0, 276, 120);
+                    
+                    lCtx.fillStyle = '#1a1a1a';
+                    lCtx.fillRect(10, 5, 256, 60);
+                    lCtx.strokeStyle = 'rgba(255,255,255,0.12)';
+                    lCtx.strokeRect(10, 5, 256, 60);
+                    
+                    const channel = getW('cr_lvl_channel')?.value || 'rgb';
+                    const hist = new Uint32Array(256);
+                    const baseImgData = getAioBaseImgData();
+                    if (baseImgData) {
+                        const len = baseImgData.length;
+                        const chIdx = channel === 'r' ? 0 : (channel === 'g' ? 1 : (channel === 'b' ? 2 : -1));
+                        if (chIdx >= 0) {
+                            for (let i = 0; i < len; i += 4) {
+                                hist[baseImgData[i + chIdx]]++;
+                            }
+                        } else {
+                            for (let i = 0; i < len; i += 4) {
+                                const lum = Math.round(baseImgData[i] * 0.299 + baseImgData[i + 1] * 0.587 + baseImgData[i + 2] * 0.114);
+                                hist[lum]++;
+                            }
+                        }
+                    }
+                    
+                    let maxV = 0;
+                    for (let i = 0; i < 256; i++) {
+                        if (hist[i] > maxV) maxV = hist[i];
+                    }
+                    if (maxV > 0) {
+                        lCtx.fillStyle = channel === 'r' ? 'rgba(220,80,80,0.85)' :
+                                        channel === 'g' ? 'rgba(80,220,80,0.85)' :
+                                        channel === 'b' ? 'rgba(80,140,255,0.85)' :
+                                        'rgba(180,180,180,0.85)';
+                        for (let i = 0; i < 256; i++) {
+                            const h = (hist[i] / maxV) * 55;
+                            if (h > 0) {
+                                lCtx.fillRect(10 + i, 65 - h, 1, h);
+                            }
+                        }
+                    }
+                    
+                    // Normalize values to canvas coordinates (matching getLvlHandlePositions in trix_camera_raw.js)
+                    const inB  = parseFloat(getW('cr_lvl_in_black')?.value ?? 0);
+                    const inW  = parseFloat(getW('cr_lvl_in_white')?.value ?? 255);
+                    const gamma = parseFloat(getW('cr_lvl_gamma')?.value ?? 1.0);
+                    const outB = parseFloat(getW('cr_lvl_out_black')?.value ?? 0);
+                    const outW = parseFloat(getW('cr_lvl_out_white')?.value ?? 255);
+
+                    // Pixel X for each handle — same formula as camera raw
+                    const bx  = 10 + (inB  / 255) * 256;
+                    const wx  = 10 + (inW  / 255) * 256;
+                    // Gamma: gRel = 0.5 - log10(gamma)/2  (matches camera raw dragLvlHandle inverse)
+                    const gRel = 0.5 - Math.log10(Math.max(0.01, Math.min(99.99, gamma))) / 2;
+                    const gx  = bx + Math.max(0, Math.min(1, gRel)) * (wx - bx);
+                    const obx = 10 + (outB / 255) * 256;
+                    const owx = 10 + (outW / 255) * 256;
+
+                    // Input gradient bar
+                    const gradIn = lCtx.createLinearGradient(10, 70, 266, 70);
+                    gradIn.addColorStop(0, '#000'); gradIn.addColorStop(1, '#fff');
+                    lCtx.fillStyle = gradIn;
+                    lCtx.fillRect(10, 70, 256, 8);
+
+                    // Input handles (triangle pointing down, tip at top)
+                    const drawHandle = (ctx, x, y, fill, stroke) => {
+                        ctx.beginPath();
+                        ctx.moveTo(x, y - 6);
+                        ctx.lineTo(x - 5, y + 4);
+                        ctx.lineTo(x + 5, y + 4);
+                        ctx.closePath();
+                        ctx.fillStyle = fill; ctx.fill();
+                        ctx.strokeStyle = stroke; ctx.lineWidth = 1.5; ctx.stroke();
+                    };
+                    drawHandle(lCtx, bx, 84, '#000', '#fff');
+                    drawHandle(lCtx, gx, 84, '#808080', '#fff');
+                    drawHandle(lCtx, wx, 84, '#fff', '#000');
+
+                    // Output gradient bar
+                    const gradOut = lCtx.createLinearGradient(10, 92, 266, 92);
+                    gradOut.addColorStop(0, '#000'); gradOut.addColorStop(1, '#fff');
+                    lCtx.fillStyle = gradOut;
+                    lCtx.fillRect(10, 92, 256, 8);
+
+                    drawHandle(lCtx, obx, 106, '#000', '#fff');
+                    drawHandle(lCtx, owx, 106, '#fff', '#000');
+                };
+
+                const aioHitTestLvlHandle = (mx, my, inB, inW, gamma, outB, outW) => {
+                    // All positions in canvas pixel coordinates (same formula as drawAioLevelsBar)
+                    const bx  = 10 + (inB  / 255) * 256;
+                    const wx  = 10 + (inW  / 255) * 256;
+                    const gRel = 0.5 - Math.log10(Math.max(0.01, Math.min(99.99, gamma))) / 2;
+                    const gx  = bx + Math.max(0, Math.min(1, gRel)) * (wx - bx);
+                    const obx = 10 + (outB / 255) * 256;
+                    const owx = 10 + (outW / 255) * 256;
+                    
+                    if (my >= 68 && my <= 92) {
+                        const dB = Math.abs(mx - bx);
+                        const dG = Math.abs(mx - gx);
+                        const dW = Math.abs(mx - wx);
+                        const minD = Math.min(dB, dG, dW);
+                        if (minD <= 8) {
+                            if (minD === dB) return 'in_black';
+                            if (minD === dW) return 'in_white';
+                            return 'gamma';
+                        }
+                    }
+                    if (my >= 96 && my <= 116) {
+                        if (Math.abs(mx - obx) <= 8) return 'out_black';
+                        if (Math.abs(mx - owx) <= 8) return 'out_white';
+                    }
+                    return null;
+                };
+
+                let aioActiveLvlHandle = null;
+                const aioDragLvlHandle = (mx, lvlCanvas) => {
+                    if (!aioActiveLvlHandle) return;
+                    // Convert canvas pixel X to value 0-255 (inverse of 10 + (val/255)*256)
+                    const xNorm = Math.max(0, Math.min(1, (mx - 10) / 256));
+                    const val   = Math.round(xNorm * 255);
+                    
+                    const inB = parseFloat(getW('cr_lvl_in_black')?.value ?? 0);
+                    const inW = parseFloat(getW('cr_lvl_in_white')?.value ?? 255);
+                    
+                    if (aioActiveLvlHandle === 'in_black') {
+                        const newVal = Math.min(inW - 1, Math.max(0, val));
+                        getW('cr_lvl_in_black').value = newVal;
+                    } else if (aioActiveLvlHandle === 'in_white') {
+                        const newVal = Math.max(inB + 1, Math.min(255, val));
+                        getW('cr_lvl_in_white').value = newVal;
+                    } else if (aioActiveLvlHandle === 'out_black') {
+                        const outW = parseFloat(getW('cr_lvl_out_white')?.value ?? 255);
+                        const newVal = Math.min(outW - 1, Math.max(0, val));
+                        getW('cr_lvl_out_black').value = newVal;
+                    } else if (aioActiveLvlHandle === 'out_white') {
+                        const outB = parseFloat(getW('cr_lvl_out_black')?.value ?? 0);
+                        const newVal = Math.max(outB + 1, Math.min(255, val));
+                        getW('cr_lvl_out_white').value = newVal;
+                    } else if (aioActiveLvlHandle === 'gamma') {
+                        // Map xNorm (pixel fraction) back to gamma via inverse of gRel formula
+                        // gRel = 0.5 - log10(gamma)/2  =>  gamma = 10^((0.5 - gRel) * 2)
+                        const curInB = 10 + (inB / 255) * 256;
+                        const curInW = 10 + (inW / 255) * 256;
+                        const range  = Math.max(1, curInW - curInB);
+                        const gRel   = Math.max(0, Math.min(1, (mx - curInB) / range));
+                        const newGamma = Math.pow(10, (0.5 - gRel) * 2);
+                        getW('cr_lvl_gamma').value = Math.max(0.1, Math.min(10.0, parseFloat(newGamma.toFixed(2))));
+                    }
+                    
+                    drawAioLevelsBar(lvlCanvas);
+                    updateGroupActiveColors();
+                    if(app.graph) app.graph.setDirtyCanvas(true, true);
+                };
+
+                const aioCbShiftsToPos = (r, g, b) => {
+                    const tr = 0.5 + r / 200;
+                    const tg = 0.5 + g / 200;
+                    const tb = 0.5 + b / 200;
+                    const cr = Math.max(0, Math.min(1, tr));
+                    const cg = Math.max(0, Math.min(1, tg));
+                    const cb_ = Math.max(0, Math.min(1, tb));
+                    const mx = Math.max(cr, cg, cb_);
+                    const mn = Math.min(cr, cg, cb_);
+                    const d = mx - mn;
+                    let hue = 0;
+                    if (d > 1e-8) {
+                        if (mx === cr) hue = (((cg - cb_) / d) / 6) % 1;
+                        else if (mx === cg) hue = ((2 + (cb_ - cr) / d) / 6) % 1;
+                        else hue = ((4 + (cr - cg) / d) / 6) % 1;
+                        if (hue < 0) hue += 1;
+                    }
+                    const s = mx > 0 ? d / mx : 0;
+                    return { hue: hue, distance: s * mx };
+                };
+
+                const drawAioCbWheels = (cbCanvas) => {
+                    const ctx = cbCanvas.getContext("2d");
+                    ctx.clearRect(0, 0, cbCanvas.width, cbCanvas.height);
+                    
+                    const disc = getAioCbDiscCanvas();
+                    const rMax = 38;
+                    const cy = 65;
+                    const centers = [50, 150, 250];
+                    const labels = ["Shadows", "Midtones", "Highlights"];
+                    const prefixes = ["shad", "mid", "high"];
+                    
+                    for (let i = 0; i < 3; i++) {
+                        const cx = centers[i];
+                        ctx.fillStyle = '#cfcfcf';
+                        ctx.font = 'bold 10px sans-serif';
+                        ctx.textAlign = 'center';
+                        ctx.fillText(labels[i], cx, 18);
+                        
+                        ctx.drawImage(disc, cx - rMax, cy - rMax, rMax * 2, rMax * 2);
+                        
+                        const r = parseFloat(getW(`cr_cb_${prefixes[i]}_r`)?.value || 0);
+                        const g = parseFloat(getW(`cr_cb_${prefixes[i]}_g`)?.value || 0);
+                        const b = parseFloat(getW(`cr_cb_${prefixes[i]}_b`)?.value || 0);
+                        
+                        const pos = aioCbShiftsToPos(r, g, b);
+                        const ang = pos.hue * Math.PI * 2;
+                        const rr = pos.distance * rMax;
+                        const hx = cx + Math.sin(ang) * rr;
+                        const hy = cy - Math.cos(ang) * rr;
+                        
+                        ctx.lineWidth = 2.5; ctx.strokeStyle = '#000';
+                        ctx.beginPath(); ctx.arc(hx, hy, 4.5, 0, Math.PI * 2); ctx.stroke();
+                        ctx.lineWidth = 1.5; ctx.strokeStyle = '#fff';
+                        ctx.beginPath(); ctx.arc(hx, hy, 4.5, 0, Math.PI * 2); ctx.stroke();
+                    }
+                };
+
+                let aioCbDraggingIdx = -1;
+
+                // Compute canvas-local coords from any mouse/pointer event
+                const getCbCanvasXY = (e, cbCanvas) => {
+                    const rect = cbCanvas.getBoundingClientRect();
+                    const scaleX = cbCanvas.width  / rect.width;
+                    const scaleY = cbCanvas.height / rect.height;
+                    return {
+                        mx: (e.clientX - rect.left) * scaleX,
+                        my: (e.clientY - rect.top)  * scaleY
+                    };
+                };
+
+                // Compute the current dot position (canvas coords) for a given wheel index
+                const getCbDotPos = (idx) => {
+                    const prefixes = ["shad", "mid", "high"];
+                    const centers  = [50, 150, 250];
+                    const cy = 65; const rMax = 38;
+                    const r = parseFloat(getW(`cr_cb_${prefixes[idx]}_r`)?.value || 0);
+                    const g = parseFloat(getW(`cr_cb_${prefixes[idx]}_g`)?.value || 0);
+                    const b = parseFloat(getW(`cr_cb_${prefixes[idx]}_b`)?.value || 0);
+                    const pos = aioCbShiftsToPos(r, g, b);
+                    const ang = pos.hue * Math.PI * 2;
+                    const rr = pos.distance * rMax;
+                    return { hx: centers[idx] + Math.sin(ang) * rr, hy: cy - Math.cos(ang) * rr };
+                };
+
+                const aioCbApplyPos = (rawMx, rawMy, idx, cbCanvas) => {
+                    const centers  = [50, 150, 250];
+                    const prefixes = ["shad", "mid", "high"];
+                    const cy = 65; const rMax = 38;
+                    const cx   = centers[idx];
+                    const dx0  = rawMx - cx;
+                    const dy0  = rawMy - cy;
+                    const dist = Math.min(rMax, Math.sqrt(dx0*dx0 + dy0*dy0));
+                    const distance = rMax > 0 ? dist / rMax : 0;
+
+                    let hue = Math.atan2(dx0, -dy0) / (Math.PI * 2);
+                    if (hue < 0) hue += 1;
+                    const h6 = hue * 6;
+                    const ii = Math.floor(h6);
+                    const f  = h6 - ii;
+                    const p = 0;
+                    const q = 1 - f;
+                    const t = f;
+                    let r, g, b;
+                    switch (((ii % 6) + 6) % 6) {
+                        case 0: r=1;   g=t;   b=p;   break;
+                        case 1: r=q;   g=1;   b=p;   break;
+                        case 2: r=p;   g=1;   b=t;   break;
+                        case 3: r=p;   g=q;   b=1;   break;
+                        case 4: r=t;   g=p;   b=1;   break;
+                        default: r=1;  g=p;   b=q;   break;
+                    }
+                    const rVal = Math.max(-100, Math.min(100, Math.round((r-0.5)*2*100*distance)));
+                    const gVal = Math.max(-100, Math.min(100, Math.round((g-0.5)*2*100*distance)));
+                    const bVal = Math.max(-100, Math.min(100, Math.round((b-0.5)*2*100*distance)));
+
+                    const wR = getW(`cr_cb_${prefixes[idx]}_r`);
+                    const wG = getW(`cr_cb_${prefixes[idx]}_g`);
+                    const wB = getW(`cr_cb_${prefixes[idx]}_b`);
+                    if (wR) wR.value = rVal;
+                    if (wG) wG.value = gVal;
+                    if (wB) wB.value = bVal;
+
+                    drawAioCbWheels(cbCanvas);
+                    updateGroupActiveColors();
+                    if(app.graph) app.graph.setDirtyCanvas(true, true);
+                };
+
+                const aioCbOnDown = (e, cbCanvas) => {
+                    const { mx, my } = getCbCanvasXY(e, cbCanvas);
+                    const centers = [50, 150, 250];
+                    const cy = 65; const rMax = 38;
+                    // Find which wheel was clicked
+                    for (let i = 0; i < 3; i++) {
+                        const dx = mx - centers[i], dy = my - cy;
+                        if (dx*dx + dy*dy <= (rMax+6)*(rMax+6)) {
+                            aioCbDraggingIdx = i;
+                            aioCbApplyPos(mx, my, i, cbCanvas);
+                            break;
+                        }
+                    }
+                };
+
+                const aioCbPickFromCanvas = (e, cbCanvas) => {
+                    if (aioCbDraggingIdx === -1) return;
+                    const { mx, my } = getCbCanvasXY(e, cbCanvas);
+                    aioCbApplyPos(mx, my, aioCbDraggingIdx, cbCanvas);
+                };
+
+                const createUI_AccordionPanel = (titleText, defaultOpen = false) => {
+                    const wrapper = document.createElement("div");
+                    wrapper.style.cssText = "border: 1px solid var(--trix-border); border-radius: 4px; background: rgba(0,0,0,0.15); overflow: visible; margin-bottom: 6px; flex-shrink: 0; width: 100%; box-sizing: border-box;";
+
+                    const header = document.createElement("div");
+                    header.style.cssText = "padding: 6px 10px; background: #2a2a2f; cursor: pointer; display: flex; justify-content: space-between; align-items: center; color: var(--trix-text); font-size: 11px; font-weight: bold; user-select: none; border-radius: 3px; transition: background 0.2s;";
+                    header.addEventListener("mousedown", (e) => e.stopPropagation());
+                    header.addEventListener("pointerdown", (e) => e.stopPropagation());
+                    
+                    const chev = document.createElement("span");
+                    chev.innerHTML = svgChevronDown;
+                    chev.style.transition = "transform 0.2s";
+                    chev.style.display = "flex";
+                    chev.style.alignItems = "center";
+                    
+                    header.innerHTML = `<span>${titleText}</span>`;
+                    header.appendChild(chev);
+                    
+                    const body = document.createElement("div");
+                    body.style.cssText = `padding: 6px; display: ${defaultOpen ? 'flex' : 'none'}; flex-direction: column; gap: 4px; overflow: visible; width: 100%; box-sizing: border-box;`;
+                    
+                    if (defaultOpen) {
+                        chev.style.transform = "rotate(-180deg)";
+                    }
+                    
+                    let isOpen = defaultOpen;
+                    header.onclick = () => {
+                        isOpen = !isOpen;
+                        body.style.display = isOpen ? "flex" : "none";
+                        chev.style.transform = isOpen ? "rotate(-180deg)" : "rotate(0deg)";
+                    };
+                    
+                    wrapper.append(header, body);
+                    cameraRawPanel.appendChild(wrapper);
+                    return { wrapper, body, header };
+                };
+
+                const groupTrackers = [];
+                const curvesHasData = (cState) => {
+                    if (!cState) return false;
+                    const channels = ['rgb', 'r', 'g', 'b'];
+                    return channels.some(ch => {
+                        const pts = cState[ch];
+                        if (!pts || pts.length <= 2) {
+                            if (pts && pts.length === 2) {
+                                // Check if it's the default straight line
+                                return !(pts[0].x === 0 && pts[0].y === 0 && pts[1].x === 255 && pts[1].y === 255);
+                            }
+                            return pts && pts.length > 2;
+                        }
+                        return true;
+                    });
+                };
+                const hslHasData = (hState) => {
+                    if (!hState || typeof hState !== 'object') return false;
+                    if (hState.colorize) return true;
+                    const channels = ['master','reds','yellows','greens','cyans','blues','magentas'];
+                    return channels.some(ch => {
+                        const hs = hState[ch];
+                        if (!hs) return false;
+                        return ((hs.h || 0) !== 0 || (hs.s || 0) !== 0 || (hs.l || 0) !== 0);
+                    });
+                };
+                const updateGroupActiveColors = () => {
+                    groupTrackers.forEach(g => {
+                        if (g.isHsl) {
+                            // Check actual hsl_data widget for real changes
+                            let isHslChanged = false;
+                            const wHslData = getW("hsl_data");
+                            if (wHslData && wHslData.value) {
+                                try { isHslChanged = hslHasData(JSON.parse(wHslData.value)); } catch(e) {}
+                            }
+                            // Also check the hsl_active flag
+                            const wHslActive = getW("hsl_active");
+                            if (wHslActive && wHslActive.value) isHslChanged = true;
+                            g.header.style.background = isHslChanged ? "#235a7a" : "#2a2a2f";
+                            return;
+                        }
+                        if (g.isCurve) {
+                            // Check actual curve_data widget for real changes
+                            let isCurveChanged = false;
+                            const wCurveData = getW("curve_data");
+                            if (wCurveData && wCurveData.value) {
+                                try { isCurveChanged = curvesHasData(JSON.parse(wCurveData.value)); } catch(e) {}
+                            }
+                            // Also check the curve_active flag
+                            const wCurveActive = getW("curve_active");
+                            if (wCurveActive && wCurveActive.value) isCurveChanged = true;
+                            g.header.style.background = isCurveChanged ? "#235a7a" : "#2a2a2f";
+                            return;
+                        }
+                        let isChanged = false;
+                        if (g.items) {
+                            for (const conf of g.items) {
+                                const wgt = getW(conf.id);
+                                if (wgt && wgt.value !== undefined && wgt.value !== null) {
+                                    let wVal = wgt.value;
+                                    let defVal = conf.default !== undefined ? conf.default : 0;
+                                    if (typeof defVal === 'number') {
+                                        if (Math.abs(parseFloat(wVal) - parseFloat(defVal)) > 0.001) {
+                                            isChanged = true;
+                                            break;
+                                        }
+                                    } else {
+                                        if (String(wVal) !== String(defVal)) {
+                                            isChanged = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        g.header.style.background = isChanged ? "#235a7a" : "#2a2a2f";
+                    });
+                };
 
                 const rawGroups = [
-                    [
-                        {id: 'cr_offset', label: 'Offset', min:-100, max:100, default:0},
-                        {id: 'cr_exp', label: 'Exposure', min:-200, max:200, default:0},
-                        {id: 'cr_cont', label: 'Contrast', min:-100, max:100, default:0},
-                        {id: 'cr_high', label: 'Highlights', min:-100, max:100, default:0},
-                        {id: 'cr_shad', label: 'Shadows', min:-100, max:100, default:0},
-                        {id: 'cr_white', label: 'Whites', min:-100, max:100, default:0},
-                        {id: 'cr_black', label: 'Blacks', min:-100, max:100, default:0}
-                    ],
-                    [
-                        {id: 'cr_temp', label: 'Temperature', min:-150, max:150, default:0},
-                        {id: 'cr_tint', label: 'Tint', min:-150, max:150, default:0},
-                        {id: 'cr_vibrance', label: 'Vibrance', min:-150, max:150, default:0},
-                        {id: 'cr_sat', label: 'Saturation', min:-100, max:100, default:0}
-                    ],
-                    [
-                        {id: 'cr_tex', label: 'Texture', min:-200, max:200, default:0},
-                        {id: 'cr_clar', label: 'Clarity', min:-200, max:200, default:0},
-                        {id: 'cr_dehz', label: 'Dehaze', min:-150, max:150, default:0},
-                        {id: 'cr_sharp', label: 'Sharpening', min:0, max:150, default:0},
-                        {id: 'cr_denoise', label: 'Noise Reduction', min:0, max:150, default:0}
-                    ],
-                    [
-                        {id: 'cr_blur', label: 'Gaussian Blur', min:0, max:150, default:0},
-                        {id: 'cr_surface_blur', label: 'Surface Blur', min:0, max:200, default:0},
-                        {id: 'cr_grain', label: 'Grain', min:0, max:150, default:0},
-                        {id: 'cr_vignette', label: 'Vignette', min:0, max:150, default:0}
-                    ],
-                    [
-                        {id: 'cr_sketch_kernel_size', label: 'Kernel Size', min:0, max:25, default:0},
-                        {id: 'cr_sketch_sigma', label: 'Sigma', min:0.1, max:5.0, step:0.05, default:1.4},
-                        {id: 'cr_sketch_k_sigma', label: 'K-Sigma', min:1.0, max:5.0, step:0.05, default:1.6},
-                        {id: 'cr_sketch_epsilon', label: 'Epsilon', min:-0.2, max:0.2, step:0.005, default:-0.03},
-                        {id: 'cr_sketch_phi', label: 'Phi', min:1.0, max:50.0, step:1.0, default:10.0},
-                        {id: 'cr_sketch_gamma', label: 'Gamma', min:0.0, max:1.0, step:0.005, default:1.0},
-                        {id: 'cr_sketch_color', label: 'Color Mode', type: 'combo', options: ['gray', 'rgb'], default: 'gray'}
-                    ],
-                    [
-                        {id: 'cr_pixel_colors', label: 'Colors', min:2, max:256, default:128},
-                        {id: 'cr_pixel_dot_size', label: 'Dot Size', min:0, max:32, default:0},
-                        {id: 'cr_pixel_outline', label: 'Outline Inflating', min:0, max:9, default:0},
-                        {id: 'cr_pixel_smoothing', label: 'Smoothing', min:0, max:10, default:0},
-                        {id: 'cr_pixel_algo', label: 'Algorithm', type: 'combo', options: ['kmeans', 'dithering', 'kmeans with dithering'], default: 'kmeans'}
-                    ]
+                    {
+                        title: "Light",
+                        defaultOpen: true,
+                        items: [
+                            {id: 'cr_offset', label: 'Offset', min:-100, max:100, default:0},
+                            {id: 'cr_exp', label: 'Exposure', min:-200, max:200, default:0},
+                            {id: 'cr_cont', label: 'Contrast', min:-150, max:150, default:0},
+                            {id: 'cr_high', label: 'Highlights', min:-150, max:150, default:0},
+                            {id: 'cr_shad', label: 'Shadows', min:-150, max:150, default:0},
+                            {id: 'cr_white', label: 'Whites', min:-150, max:150, default:0},
+                            {id: 'cr_black', label: 'Blacks', min:-150, max:150, default:0}
+                        ]
+                    },
+                    {
+                        title: "Color",
+                        defaultOpen: true,
+                        items: [
+                            {id: 'cr_temp', label: 'Temperature', min:-150, max:150, default:0},
+                            {id: 'cr_tint', label: 'Tint', min:-150, max:150, default:0},
+                            {id: 'cr_vibrance', label: 'Vibrance', min:-150, max:150, default:0},
+                            {id: 'cr_sat', label: 'Saturation', min:-100, max:100, default:0}
+                        ]
+                    },
+                    {
+                        title: "Detail",
+                        defaultOpen: false,
+                        items: [
+                            {id: 'cr_tex', label: 'Texture', min:-200, max:200, default:0},
+                            {id: 'cr_clar', label: 'Clarity', min:-200, max:200, default:0},
+                            {id: 'cr_dehz', label: 'Dehaze', min:-150, max:150, default:0},
+                            {id: 'cr_sharp', label: 'Sharpen', min:0, max:150, default:0},
+                            {id: 'cr_denoise', label: 'Noise Reduction', min:0, max:150, default:0}
+                        ]
+                    },
+                    {
+                        title: "Curves",
+                        defaultOpen: false,
+                        isCurve: true
+                    },
+                    {
+                        title: "Hue/Saturation",
+                        defaultOpen: false,
+                        isHsl: true
+                    },
+                    {
+                        title: "Color Balance",
+                        defaultOpen: false,
+                        items: [
+                            {id: 'cr_cb_shad_r', label: 'Shadow R', min:-100, max:100, default:0},
+                            {id: 'cr_cb_shad_g', label: 'Shadow G', min:-100, max:100, default:0},
+                            {id: 'cr_cb_shad_b', label: 'Shadow B', min:-100, max:100, default:0},
+                            {id: 'cr_cb_mid_r', label: 'Midtone R', min:-100, max:100, default:0},
+                            {id: 'cr_cb_mid_g', label: 'Midtone G', min:-100, max:100, default:0},
+                            {id: 'cr_cb_mid_b', label: 'Midtone B', min:-100, max:100, default:0},
+                            {id: 'cr_cb_high_r', label: 'Highlight R', min:-100, max:100, default:0},
+                            {id: 'cr_cb_high_g', label: 'Highlight G', min:-100, max:100, default:0},
+                            {id: 'cr_cb_high_b', label: 'Highlight B', min:-100, max:100, default:0}
+                        ],
+                        hasCanvas: 'color_balance'
+                    },
+                    {
+                        title: "Color Filter",
+                        defaultOpen: false,
+                        items: [
+                            {id: 'cr_cf_hue', label: 'Hue', min:0, max:360, default:0},
+                            {id: 'cr_cf_density', label: 'Density', min:0, max:255, default:0},
+                            {id: 'cr_cf_preserve', label: 'Preserve Highl.', min:0, max:100, default:50}
+                        ],
+                        hasCanvas: 'color_filter'
+                    },
+                    {
+                        title: "Levels",
+                        defaultOpen: false,
+                        items: [
+                            {id: 'cr_lvl_channel', label: 'Channel', type: 'combo', options: ['rgb', 'r', 'g', 'b'], default: 'rgb'},
+                            {id: 'cr_lvl_in_black', label: 'In Black', min:0, max:254, default:0},
+                            {id: 'cr_lvl_in_white', label: 'In White', min:1, max:255, default:255},
+                            {id: 'cr_lvl_gamma', label: 'Gamma', min:0.1, max:10.0, step:0.01, default:1.0},
+                            {id: 'cr_lvl_out_black', label: 'Out Black', min:0, max:254, default:0},
+                            {id: 'cr_lvl_out_white', label: 'Out White', min:1, max:255, default:255}
+                        ],
+                        hasCanvas: 'levels'
+                    },
+                    {
+                        title: "Blur",
+                        defaultOpen: false,
+                        items: [
+                            {id: 'cr_blur_radius', label: 'Radius', min:0, max:50, default:0},
+                            {id: 'cr_blur_mode', label: 'Mode', type: 'combo', options: ['Gaussian', 'Average', 'Edge Average', 'Surface Blur'], default: 'Gaussian'}
+                        ]
+                    },
+                    {
+                        title: "Halftone",
+                        defaultOpen: false,
+                        items: [
+                            {id: 'cr_ht_size', label: 'Size', min:0, max:50, default:0},
+                            {id: 'cr_ht_angle', label: 'Angle', min:-180, max:180, default:15},
+                            {id: 'cr_ht_contrast', label: 'Contrast', min:-100, max:100, default:0},
+                            {id: 'cr_ht_brightness', label: 'Brightness', min:-100, max:100, default:0},
+                            {id: 'cr_ht_dither', label: 'Dither', min:0, max:100, default:100},
+                            {id: 'cr_ht_shape', label: 'Shape', type: 'combo', options: ['Dot', 'Square Dot', 'Line', 'Rhomboid', 'Cross Cut', 'Saddle', 'Random Dots'], default: 'Dot'},
+                            {id: 'cr_ht_inverse', label: 'Inverse', type: 'checkbox', default: false}
+                        ],
+                        hasCanvas: 'halftone'
+                    },
+                    {
+                        title: "Sharpen",
+                        defaultOpen: false,
+                        items: [
+                            {id: 'cr_usm_amount', label: 'Amount', min:0, max:200, default:0},
+                            {id: 'cr_usm_radius', label: 'Radius', min:1, max:10, default:1},
+                            {id: 'cr_usm_threshold', label: 'Threshold', min:0, max:255, default:0},
+                            {id: 'cr_lap_amount', label: 'Laplacian Amount', min:0.0, max:1.0, step:0.01, default:0},
+                            {id: 'cr_lap_kernel', label: 'Laplacian Kernel', type: 'combo', options: ['8-neighbor', '4-neighbor'], default: '8-neighbor'}
+                        ]
+                    },
+                    {
+                        title: "Posterize",
+                        defaultOpen: false,
+                        items: [
+                            {id: 'cr_post_enable', label: 'Enable Posterize', type: 'checkbox', default: false},
+                            {id: 'cr_post_levels', label: 'Levels', min:2, max:32, default:4},
+                            {id: 'cr_post_dither', label: 'Dither', min:0, max:100, default:0},
+                            {id: 'cr_post_mode', label: 'Mode', type: 'combo', options: ['RGB', 'Luminance'], default: 'RGB'},
+                            {id: 'cr_post_dither_mode', label: 'Dither Mode', type: 'combo', options: ['None', 'Bayer', 'Random', 'Floyd-Steinberg', 'Atkinson'], default: 'None'}
+                        ]
+                    },
+                    {
+                        title: "Effect",
+                        defaultOpen: false,
+                        items: [
+                            {id: 'cr_grain', label: 'Grain', min:0, max:150, default:0},
+                            {id: 'cr_vignette', label: 'Vignette', min:0, max:150, default:0}
+                        ]
+                    },
+                    {
+                        title: "Sketch",
+                        defaultOpen: false,
+                        items: [
+                            {id: 'cr_sketch_kernel_size', label: 'Kernel Size', min:0, max:25, default:0},
+                            {id: 'cr_sketch_sigma', label: 'Sigma', min:0.1, max:5.0, step:0.05, default:1.4},
+                            {id: 'cr_sketch_k_sigma', label: 'K-Sigma', min:1.0, max:5.0, step:0.05, default:1.6},
+                            {id: 'cr_sketch_epsilon', label: 'Epsilon', min:-0.2, max:0.2, step:0.005, default:-0.03},
+                            {id: 'cr_sketch_phi', label: 'Phi', min:1.0, max:50.0, step:1.0, default:10.0},
+                            {id: 'cr_sketch_gamma', label: 'Gamma', min:0.0, max:1.0, step:0.005, default:1.0},
+                            {id: 'cr_sketch_color', label: 'Color Mode', type: 'combo', options: ['gray', 'rgb'], default: 'gray'}
+                        ]
+                    },
+                    {
+                        title: "Pixelize",
+                        defaultOpen: false,
+                        items: [
+                            {id: 'cr_pixel_colors', label: 'Colors', min:2, max:256, default:128},
+                            {id: 'cr_pixel_dot_size', label: 'Dot Size', min:0, max:32, default:0},
+                            {id: 'cr_pixel_outline', label: 'Outline Inflating', min:0, max:9, default:0},
+                            {id: 'cr_pixel_smoothing', label: 'Smoothing', min:0, max:10, default:0},
+                            {id: 'cr_pixel_algo', label: 'Algorithm', type: 'combo', options: ['kmeans', 'dithering', 'kmeans with dithering'], default: 'kmeans'}
+                        ]
+                    }
                 ];
 
-                rawGroups.forEach((group, gIdx) => {
-                    if (gIdx > 0) {
-                        const sep = document.createElement("hr");
-                        sep.style.cssText = "border: none; border-top: 1px solid #333; margin: 4px 0; width: 100%;";
-                        cameraRawPanel.appendChild(sep);
+                rawGroups.forEach((groupConf) => {
+                    const panel = createUI_AccordionPanel(groupConf.title, groupConf.defaultOpen);
+                    
+                    if (groupConf.isHsl) {
+                        groupTrackers.push({
+                            header: panel.header,
+                            isHsl: true
+                        });
+                        const activeRow = createToggleRow("Enable Hue/Saturation", "hsl_active");
+                        panel.body.appendChild(activeRow);
+                        
+                        const hslContent = document.createElement("div");
+                        hslContent.style.cssText = "display: flex; flex-direction: column; gap: 4px; padding: 4px; box-sizing: border-box; width: 100%;";
+                        
+                        // HSL Data State
+                        const hWgt = getW("hsl_data");
+                        let hslState = {
+                            colorize: false, activeChannel: 'master',
+                            master: { h: 0, s: 0, l: 0 },
+                            reds: { h: 0, s: 0, l: 0, center: 0, width: 60 },
+                            yellows: { h: 0, s: 0, l: 0, center: 60, width: 60 },
+                            greens: { h: 0, s: 0, l: 0, center: 120, width: 60 },
+                            cyans: { h: 0, s: 0, l: 0, center: 180, width: 60 },
+                            blues: { h: 0, s: 0, l: 0, center: 240, width: 60 },
+                            magentas: { h: 0, s: 0, l: 0, center: 300, width: 60 }
+                        };
+                        const defaultHslState = () => ({
+                            colorize: false, activeChannel: 'master',
+                            master: { h: 0, s: 0, l: 0 },
+                            reds: { h: 0, s: 0, l: 0, center: 0, width: 60 },
+                            yellows: { h: 0, s: 0, l: 0, center: 60, width: 60 },
+                            greens: { h: 0, s: 0, l: 0, center: 120, width: 60 },
+                            cyans: { h: 0, s: 0, l: 0, center: 180, width: 60 },
+                            blues: { h: 0, s: 0, l: 0, center: 240, width: 60 },
+                            magentas: { h: 0, s: 0, l: 0, center: 300, width: 60 }
+                        });
+                        const loadHslState = () => {
+                            if (hWgt && hWgt.value && hWgt.value !== "{}" && hWgt.value !== "") {
+                                try {
+                                    const parsed = JSON.parse(hWgt.value);
+                                    if (parsed && typeof parsed === "object") {
+                                        hslState = Object.assign(defaultHslState(), parsed);
+                                        return;
+                                    }
+                                } catch(e) {}
+                            }
+                            // Empty / invalid → reset to defaults
+                            hslState = defaultHslState();
+                        };
+                        loadHslState();
+
+                        // Channel select
+                        const chRow = document.createElement("div");
+                        chRow.style.cssText = "display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;";
+                        const chLabel = document.createElement("span");
+                        chLabel.innerText = "Channel:";
+                        chLabel.style.cssText = "color: var(--trix-icon); font-size: 10px;";
+                        const chSelect = document.createElement("select");
+                        chSelect.style.cssText = "background: #111; color: var(--trix-text); border: 1px solid var(--trix-border); border-radius: 4px; font-size: 10px; padding: 1px 3px; max-width: 140px; cursor: pointer; flex: 1; margin-left: 10px;";
+                        const channelsList = [
+                            { v: 'master', t: 'Master' },
+                            { v: 'reds', t: 'Reds' },
+                            { v: 'yellows', t: 'Yellows' },
+                            { v: 'greens', t: 'Greens' },
+                            { v: 'cyans', t: 'Cyans' },
+                            { v: 'blues', t: 'Blues' },
+                            { v: 'magentas', t: 'Magentas' }
+                        ];
+                        channelsList.forEach(c => {
+                            const o = document.createElement("option");
+                            o.value = c.v; o.innerText = c.t;
+                            chSelect.appendChild(o);
+                        });
+                        chSelect.value = hslState.activeChannel;
+                        chRow.append(chLabel, chSelect);
+                        hslContent.appendChild(chRow);
+
+                        // Colorize checkbox
+                        const colorizeRow = document.createElement("div");
+                        colorizeRow.style.cssText = "display: flex; align-items: center; gap: 6px; font-size: 10px; color: var(--trix-text); margin-bottom: 6px;";
+                        const colorizeChk = document.createElement("input");
+                        colorizeChk.type = "checkbox"; colorizeChk.style.cursor = "pointer";
+                        colorizeChk.checked = !!hslState.colorize;
+                        colorizeRow.append(colorizeChk, document.createTextNode("Colorize"));
+                        hslContent.appendChild(colorizeRow);
+
+                        // Spectrum gradients
+                        const gradContainer = document.createElement("div");
+                        gradContainer.style.cssText = "display: flex; flex-direction: column; gap: 3px; margin: 4px 0;";
+                        const gradBase = document.createElement("div");
+                        gradBase.style.cssText = "height: 6px; width: 100%; background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00); border-radius: 2px;";
+                        const gradShift = document.createElement("div");
+                        gradShift.style.cssText = "height: 6px; width: 100%; background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00); border-radius: 2px;";
+                        gradContainer.append(gradBase, gradShift);
+                        hslContent.appendChild(gradContainer);
+
+                        const updateGradients = () => {
+                            let shift = hslState[hslState.activeChannel]?.h || 0;
+                            let c = [];
+                            for (let i = 0; i <= 6; i++) {
+                                let hue = (i * 60 + shift) % 360;
+                                if (hue < 0) hue += 360;
+                                c.push(`hsl(${hue}, 100%, 50%)`);
+                            }
+                            gradShift.style.background = `linear-gradient(to right, ${c.join(', ')})`;
+                        };
+
+                        // Helper to build HSL slider row
+                        const createAioHslSliderRow = (key, labelText, min, max, def) => {
+                            const r = document.createElement("div");
+                            r.style.cssText = "display: flex; align-items: center; justify-content: space-between; padding: 2px 0; min-height: 20px;";
+                            const lbl = document.createElement("span");
+                            lbl.innerText = labelText;
+                            lbl.style.cssText = "color: var(--trix-icon); font-size: 10px; flex: 0 0 75px;";
+                            
+                            const sl = document.createElement("input");
+                            sl.type = "range"; sl.min = min; sl.max = max; sl.style.cssText = "flex: 1; margin: 0 6px; height: 10px; accent-color: var(--trix-accent); cursor: pointer;";
+                            
+                            const inp = document.createElement("input");
+                            inp.type = "text"; inp.style.cssText = "width: 32px; background: #111; color: var(--trix-text); border: 1px solid var(--trix-border); border-radius: 3px; font-size: 9.5px; text-align: center; padding: 1px 0; outline: none;";
+                            
+                            r.append(lbl, sl, inp);
+                            
+                            const updateVal = (val) => {
+                                let parsed = parseInt(val) || 0;
+                                parsed = Math.max(min, Math.min(max, parsed));
+                                sl.value = parsed;
+                                inp.value = parsed;
+                                
+                                if (hslState[hslState.activeChannel]) {
+                                    hslState[hslState.activeChannel][key] = parsed;
+                                    if (hWgt) {
+                                        hWgt.value = JSON.stringify(hslState);
+                                    }
+                                }
+                                
+                                // Auto enable HSL active when adjusted
+                                const wActive = getW("hsl_active");
+                                if (wActive && !wActive.value) {
+                                    wActive.value = true;
+                                    const actChk = activeRow.querySelector("input[type=checkbox]");
+                                    if (actChk) actChk.checked = true;
+                                    const actTrack = activeRow.querySelector("span");
+                                    if (actTrack) actTrack.style.backgroundColor = "var(--trix-active)";
+                                }
+                                
+                                updateGradients();
+                                updateGroupActiveColors();
+                                if(app.graph) app.graph.setDirtyCanvas(true, true);
+                            };
+                            
+                            sl.oninput = (e) => updateVal(e.target.value);
+                            inp.onchange = (e) => updateVal(e.target.value);
+                            
+                            sl.addEventListener("mousedown", (e) => e.stopPropagation());
+                            sl.addEventListener("pointerdown", (e) => e.stopPropagation());
+                            inp.addEventListener("mousedown", (e) => e.stopPropagation());
+                            inp.addEventListener("pointerdown", (e) => e.stopPropagation());
+
+                            return { row: r, sl, inp, updateVal };
+                        };
+
+                        const rowH = createAioHslSliderRow('h', 'Hue:', -180, 180, 0);
+                        const rowS = createAioHslSliderRow('s', 'Saturation:', -100, 100, 0);
+                        const rowL = createAioHslSliderRow('l', 'Lightness:', -100, 100, 0);
+                        const rowW = createAioHslSliderRow('width', 'Spread:', 10, 300, 60);
+
+                        hslContent.append(rowH.row, rowS.row, rowL.row, rowW.row);
+
+                        const syncSlidersFromState = () => {
+                            loadHslState();
+                            const ch = hslState.activeChannel;
+                            colorizeChk.checked = !!hslState.colorize;
+                            chSelect.value = ch;
+                            if (hslState[ch]) {
+                                rowH.sl.value = hslState[ch].h || 0; rowH.inp.value = hslState[ch].h || 0;
+                                rowS.sl.value = hslState[ch].s || 0; rowS.inp.value = hslState[ch].s || 0;
+                                rowL.sl.value = hslState[ch].l || 0; rowL.inp.value = hslState[ch].l || 0;
+                                rowW.sl.value = hslState[ch].width || 60; rowW.inp.value = hslState[ch].width || 60;
+                            }
+                            rowW.row.style.display = (ch === 'master') ? 'none' : 'flex';
+                            updateGradients();
+                        };
+
+                        chSelect.onchange = (e) => {
+                            hslState.activeChannel = e.target.value;
+                            if (hWgt) hWgt.value = JSON.stringify(hslState);
+                            syncSlidersFromState();
+                        };
+                        chSelect.addEventListener("mousedown", (e) => e.stopPropagation());
+                        chSelect.addEventListener("pointerdown", (e) => e.stopPropagation());
+
+                        colorizeChk.onchange = (e) => {
+                            hslState.colorize = e.target.checked;
+                            if (hWgt) hWgt.value = JSON.stringify(hslState);
+                            if(app.graph) app.graph.setDirtyCanvas(true, true);
+                        };
+
+                        node._syncHTMLWithWidgets.push(syncSlidersFromState);
+                        panel.body.appendChild(hslContent);
+                        syncSlidersFromState();
+                        return;
                     }
-                    group.forEach(conf => {
+                    if (groupConf.isCurve) {
+                        groupTrackers.push({
+                            header: panel.header,
+                            isCurve: true
+                        });
+                        const activeRow = createToggleRow("Enable Curves", "curve_active");
+                        panel.body.appendChild(activeRow);
+                        
+                        const curvesContent = document.createElement("div");
+                        curvesContent.style.cssText = "display: flex; flex-direction: column; gap: 4px; padding: 4px; box-sizing: border-box; width: 100%; align-items: center;";
+                        
+                        const cWgt = getW("curve_data");
+                        let curvesState = {
+                            activeChannel: "rgb",
+                            rgb: [{ x: 0, y: 0 }, { x: 255, y: 255 }],
+                            r: [{ x: 0, y: 0 }, { x: 255, y: 255 }],
+                            g: [{ x: 0, y: 0 }, { x: 255, y: 255 }],
+                            b: [{ x: 0, y: 0 }, { x: 255, y: 255 }]
+                        };
+                        const defaultCurvesState = () => ({
+                            activeChannel: "rgb",
+                            rgb: [{ x: 0, y: 0 }, { x: 255, y: 255 }],
+                            r: [{ x: 0, y: 0 }, { x: 255, y: 255 }],
+                            g: [{ x: 0, y: 0 }, { x: 255, y: 255 }],
+                            b: [{ x: 0, y: 0 }, { x: 255, y: 255 }]
+                        });
+                        const loadCurvesState = () => {
+                            if (cWgt && cWgt.value && cWgt.value !== "{}" && cWgt.value !== "") {
+                                try {
+                                    const parsed = JSON.parse(cWgt.value);
+                                    if (parsed && typeof parsed === "object" && parsed.rgb) {
+                                        curvesState = Object.assign(defaultCurvesState(), parsed);
+                                        return;
+                                    }
+                                } catch(e) {}
+                            }
+                            // Empty / invalid → reset to defaults
+                            curvesState = defaultCurvesState();
+                        };
+                        loadCurvesState();
+
+                        // Top control row (Channel + Reset)
+                        const topRow = document.createElement("div");
+                        topRow.style.cssText = "display: flex; align-items: center; justify-content: space-between; width: 100%; margin-bottom: 6px; gap: 6px;";
+                        
+                        const chSelect = document.createElement("select");
+                        chSelect.style.cssText = "background: #111; color: var(--trix-text); border: 1px solid var(--trix-border); border-radius: 4px; font-size: 10px; padding: 1.5px 3px; cursor: pointer; flex: 1;";
+                        [
+                            { v: "rgb", t: "RGB" },
+                            { v: "r", t: "Red" },
+                            { v: "g", t: "Green" },
+                            { v: "b", t: "Blue" }
+                        ].forEach(optData => {
+                            const o = document.createElement("option");
+                            o.value = optData.v; o.innerText = optData.t;
+                            chSelect.appendChild(o);
+                        });
+                        chSelect.value = curvesState.activeChannel;
+                        
+                        const resetBtn = document.createElement("button");
+                        resetBtn.innerHTML = svgResetCR;
+                        resetBtn.title = "Reset Channel";
+                        resetBtn.style.cssText = "background: #2a2a2f; border: 1px solid var(--trix-border); border-radius: 4px; color: #ccc; cursor: pointer; padding: 2px 6px; display: flex; align-items: center;";
+                        resetBtn.onmouseenter = () => { resetBtn.style.background = "#d44a4a"; resetBtn.style.color = "#fff"; };
+                        resetBtn.onmouseleave = () => { resetBtn.style.background = "#2a2a2f"; resetBtn.style.color = "#ccc"; };
+
+                        topRow.append(chSelect, resetBtn);
+                        curvesContent.appendChild(topRow);
+
+                        // Canvas
+                        const cvs = document.createElement("canvas");
+                        cvs.width = 180; cvs.height = 180;
+                        cvs.style.cssText = "background: #0f0f13; border: 1px solid var(--trix-border); border-radius: 4px; cursor: crosshair; display: block; width: 180px; height: 180px; box-sizing: border-box;";
+                        curvesContent.appendChild(cvs);
+
+                        const hint = document.createElement("div");
+                        hint.innerText = "Click to add, drag to move, right click to delete point.";
+                        hint.style.cssText = "color: #777; font-size: 9px; line-height: 1.2; margin-top: 4px; text-align: center;";
+                        curvesContent.appendChild(hint);
+
+                        const getChannelColor = (ch) => {
+                            if (ch === "r") return "#ff5555";
+                            if (ch === "g") return "#55ff55";
+                            if (ch === "b") return "#5555ff";
+                            return "#ffffff";
+                        };
+
+                        const drawCurvesCanvas = () => {
+                            const ctx = cvs.getContext("2d");
+                            const w = cvs.width; const h = cvs.height;
+                            ctx.clearRect(0, 0, w, h);
+                            ctx.fillStyle = "#0f0f13"; ctx.fillRect(0, 0, w, h);
+
+                            // Draw grid lines
+                            ctx.strokeStyle = "rgba(255,255,255,0.04)";
+                            ctx.lineWidth = 1;
+                            for (let i = 1; i <= 3; i++) {
+                                const x = (w / 4) * i;
+                                const y = (h / 4) * i;
+                                ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+                                ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+                            }
+
+                            // Diagonal helper
+                            ctx.strokeStyle = "rgba(255,255,255,0.15)";
+                            ctx.setLineDash([2, 2]);
+                            ctx.beginPath(); ctx.moveTo(0, h); ctx.lineTo(w, 0); ctx.stroke();
+                            ctx.setLineDash([]);
+
+                            const ch = curvesState.activeChannel || "rgb";
+                            const pts = curvesState[ch] || [{x:0, y:0}, {x:255, y:255}];
+
+                            // Draw curve line
+                            ctx.strokeStyle = getChannelColor(ch);
+                            ctx.lineWidth = 1.8;
+                            ctx.beginPath();
+                            pts.forEach((pt, idx) => {
+                                const cx = (pt.x / 255) * w;
+                                const cy = (1 - pt.y / 255) * h;
+                                if (idx === 0) ctx.moveTo(cx, cy);
+                                else ctx.lineTo(cx, cy);
+                            });
+                            ctx.stroke();
+
+                            // Draw control points
+                            pts.forEach((pt, idx) => {
+                                const cx = (pt.x / 255) * w;
+                                const cy = (1 - pt.y / 255) * h;
+                                ctx.fillStyle = getChannelColor(ch);
+                                ctx.strokeStyle = "#111";
+                                ctx.lineWidth = 1;
+                                ctx.beginPath();
+                                ctx.arc(cx, cy, 3.5, 0, Math.PI * 2);
+                                ctx.fill(); ctx.stroke();
+                            });
+                        };
+
+                        let dragIdx = -1;
+                        let isDragging = false;
+
+                        const getActivePoints = () => curvesState[curvesState.activeChannel] || [{x:0, y:0}, {x:255, y:255}];
+
+                        cvs.addEventListener("mousedown", (e) => {
+                            e.preventDefault(); e.stopPropagation();
+                            const rect = cvs.getBoundingClientRect();
+                            const mx = ((e.clientX - rect.left) / rect.width) * cvs.width;
+                            const my = ((e.clientY - rect.top) / rect.height) * cvs.height;
+                            const points = getActivePoints();
+
+                            // Right click delete
+                            if (e.button === 2) {
+                                let hitIdx = -1;
+                                for (let i = 1; i < points.length - 1; i++) {
+                                    const cx = (points[i].x / 255) * cvs.width;
+                                    const cy = (1 - points[i].y / 255) * cvs.height;
+                                    if (Math.sqrt((mx - cx)**2 + (my - cy)**2) < 8) {
+                                        hitIdx = i;
+                                        break;
+                                    }
+                                }
+                                if (hitIdx > 0 && hitIdx < points.length - 1) {
+                                    points.splice(hitIdx, 1);
+                                    if (cWgt) cWgt.value = JSON.stringify(curvesState);
+                                    drawCurvesCanvas();
+                                    if(app.graph) app.graph.setDirtyCanvas(true, true);
+                                }
+                                return;
+                            }
+
+                            // Left click select or add
+                            if (e.button === 0) {
+                                let hitIdx = -1;
+                                for (let i = 0; i < points.length; i++) {
+                                    const cx = (points[i].x / 255) * cvs.width;
+                                    const cy = (1 - points[i].y / 255) * cvs.height;
+                                    if (Math.sqrt((mx - cx)**2 + (my - cy)**2) < 8) {
+                                        hitIdx = i;
+                                        break;
+                                    }
+                                }
+                                if (hitIdx >= 0) {
+                                    dragIdx = hitIdx;
+                                    isDragging = true;
+                                } else {
+                                    // Add new point
+                                    const newX = Math.round((mx / cvs.width) * 255);
+                                    const newY = Math.round((1 - my / cvs.height) * 255);
+                                    let insertIdx = 0;
+                                    while (insertIdx < points.length && points[insertIdx].x < newX) {
+                                        insertIdx++;
+                                    }
+                                    points.splice(insertIdx, 0, { x: newX, y: newY });
+                                    dragIdx = insertIdx;
+                                    isDragging = true;
+                                    if (cWgt) cWgt.value = JSON.stringify(curvesState);
+                                    drawCurvesCanvas();
+                                }
+                            }
+                        });
+
+                        window.addEventListener("mousemove", (e) => {
+                            if (isDragging && dragIdx >= 0) {
+                                e.preventDefault(); e.stopPropagation();
+                                const rect = cvs.getBoundingClientRect();
+                                const mx = ((e.clientX - rect.left) / rect.width) * cvs.width;
+                                const my = ((e.clientY - rect.top) / rect.height) * cvs.height;
+                                const points = getActivePoints();
+
+                                let newX = Math.round((mx / cvs.width) * 255);
+                                let newY = Math.round((1 - my / cvs.height) * 255);
+                                newY = Math.max(0, Math.min(255, newY));
+
+                                if (dragIdx === 0) {
+                                    newX = 0;
+                                } else if (dragIdx === points.length - 1) {
+                                    newX = 255;
+                                } else {
+                                    const minX = points[dragIdx - 1].x + 1;
+                                    const maxX = points[dragIdx + 1].x - 1;
+                                    newX = Math.max(minX, Math.min(maxX, newX));
+                                }
+
+                                points[dragIdx] = { x: newX, y: newY };
+                                if (cWgt) cWgt.value = JSON.stringify(curvesState);
+                                
+                                // Auto enable curves active when dragging
+                                const wActive = getW("curve_active");
+                                if (wActive && !wActive.value) {
+                                    wActive.value = true;
+                                    const actChk = activeRow.querySelector("input[type=checkbox]");
+                                    if (actChk) actChk.checked = true;
+                                    const actTrack = activeRow.querySelector("span");
+                                    if (actTrack) actTrack.style.backgroundColor = "var(--trix-active)";
+                                }
+
+                                drawCurvesCanvas();
+                                updateGroupActiveColors();
+                                if(app.graph) app.graph.setDirtyCanvas(true, true);
+                            }
+                        });
+
+                        window.addEventListener("mouseup", () => {
+                            isDragging = false; dragIdx = -1;
+                        });
+
+                        cvs.oncontextmenu = (e) => e.preventDefault();
+                        cvs.addEventListener("mousedown", (e) => e.stopPropagation());
+                        cvs.addEventListener("pointerdown", (e) => e.stopPropagation());
+
+                        chSelect.onchange = (e) => {
+                            curvesState.activeChannel = e.target.value;
+                            if (cWgt) cWgt.value = JSON.stringify(curvesState);
+                            drawCurvesCanvas();
+                        };
+                        chSelect.addEventListener("mousedown", (e) => e.stopPropagation());
+                        chSelect.addEventListener("pointerdown", (e) => e.stopPropagation());
+
+                        resetBtn.onclick = () => {
+                            const ch = curvesState.activeChannel || "rgb";
+                            curvesState[ch] = [{ x: 0, y: 0 }, { x: 255, y: 255 }];
+                            if (cWgt) cWgt.value = JSON.stringify(curvesState);
+                            drawCurvesCanvas();
+                            updateGroupActiveColors();
+                            if(app.graph) app.graph.setDirtyCanvas(true, true);
+                        };
+                        resetBtn.addEventListener("mousedown", (e) => e.stopPropagation());
+                        resetBtn.addEventListener("pointerdown", (e) => e.stopPropagation());
+
+                        const syncCurvesFromState = () => {
+                            loadCurvesState();
+                            chSelect.value = curvesState.activeChannel;
+                            drawCurvesCanvas();
+                        };
+
+                        node._syncHTMLWithWidgets.push(syncCurvesFromState);
+                        panel.body.appendChild(curvesContent);
+                        panel.header.addEventListener("click", () => {
+                            requestAnimationFrame(drawCurvesCanvas);
+                        });
+                        syncCurvesFromState();
+                        return;
+                    }
+
+                    groupTrackers.push({
+                        header: panel.header,
+                        items: groupConf.items
+                    });
+
+                    if (groupConf.hasCanvas === 'color_filter') {
+                        const cfWheelWrapper = document.createElement("div");
+                        cfWheelWrapper.style.cssText = "display: flex; justify-content: center; margin-bottom: 6px; position: relative;";
+                        const cfWheel = document.createElement("canvas");
+                        cfWheel.width = 150; cfWheel.height = 150;
+                        cfWheel.style.cssText = "border-radius: 50%; cursor: crosshair; border: 2px solid var(--trix-border); box-sizing: border-box;";
+                        cfWheelWrapper.appendChild(cfWheel);
+                        panel.body.appendChild(cfWheelWrapper);
+
+                        drawCfWheelRefs.push(() => drawAioCfWheel(cfWheel));
+
+                        let cfWheelDragging = false;
+                        const cfWheelDown = (e) => {
+                            e.preventDefault(); e.stopPropagation();
+                            cfWheelDragging = true;
+                            aioCfPickFromWheel(e, cfWheel);
+                        };
+                        const cfWheelMove = (e) => {
+                            if (cfWheelDragging) {
+                                e.preventDefault(); e.stopPropagation();
+                                aioCfPickFromWheel(e, cfWheel);
+                            }
+                        };
+                        cfWheel.addEventListener("mousedown", cfWheelDown);
+                        cfWheel.addEventListener("pointerdown", (e) => { e.preventDefault(); e.stopPropagation(); cfWheelDragging = true; aioCfPickFromWheel(e, cfWheel); });
+                        window.addEventListener("mousemove", cfWheelMove);
+                        window.addEventListener("pointermove", (e) => { if (cfWheelDragging) { e.preventDefault(); e.stopPropagation(); aioCfPickFromWheel(e, cfWheel); } });
+                        window.addEventListener("mouseup", () => { cfWheelDragging = false; });
+                        window.addEventListener("pointerup", () => { cfWheelDragging = false; });
+                        
+                        panel.header.addEventListener("click", () => {
+                            requestAnimationFrame(() => drawAioCfWheel(cfWheel));
+                        });
+                    } else if (groupConf.hasCanvas === 'levels') {
+                        const lvlBarWrapper = document.createElement("div");
+                        lvlBarWrapper.style.cssText = "margin: 4px 0 6px 0; user-select: none; display: flex; flex-direction: column; align-items: center; width: 100%;";
+                        const lvlCanvas = document.createElement("canvas");
+                        lvlCanvas.width = 276; lvlCanvas.height = 120;
+                        lvlCanvas.style.cssText = "border-radius: 6px; border: 1px solid var(--trix-border); cursor: pointer; display: block; width: 276px; height: 120px;";
+                        lvlBarWrapper.appendChild(lvlCanvas);
+                        panel.body.appendChild(lvlBarWrapper);
+
+                        drawLevelsBarRefs.push(() => drawAioLevelsBar(lvlCanvas));
+
+                        const lvlHitAndDrag = (e) => {
+                            const rect = lvlCanvas.getBoundingClientRect();
+                            const mx = ((e.clientX - rect.left) / rect.width) * lvlCanvas.width;
+                            const my = ((e.clientY - rect.top) / rect.height) * lvlCanvas.height;
+                            const inB = parseFloat(getW('cr_lvl_in_black')?.value ?? 0);
+                            const inW = parseFloat(getW('cr_lvl_in_white')?.value ?? 255);
+                            const gamma = parseFloat(getW('cr_lvl_gamma')?.value ?? 1.0);
+                            const outB = parseFloat(getW('cr_lvl_out_black')?.value ?? 0);
+                            const outW = parseFloat(getW('cr_lvl_out_white')?.value ?? 255);
+                            const handle = aioHitTestLvlHandle(mx, my, inB, inW, gamma, outB, outW);
+                            if (handle) {
+                                aioActiveLvlHandle = handle;
+                                aioDragLvlHandle(mx, lvlCanvas);
+                            }
+                        };
+                        lvlCanvas.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); lvlHitAndDrag(e); });
+                        lvlCanvas.addEventListener("pointerdown", (e) => { e.preventDefault(); e.stopPropagation(); lvlHitAndDrag(e); });
+                        window.addEventListener("mousemove", (e) => {
+                            if (aioActiveLvlHandle) {
+                                e.preventDefault(); e.stopPropagation();
+                                const rect = lvlCanvas.getBoundingClientRect();
+                                const mx = ((e.clientX - rect.left) / rect.width) * lvlCanvas.width;
+                                aioDragLvlHandle(mx, lvlCanvas);
+                            }
+                        });
+                        window.addEventListener("pointermove", (e) => {
+                            if (aioActiveLvlHandle) {
+                                e.preventDefault(); e.stopPropagation();
+                                const rect = lvlCanvas.getBoundingClientRect();
+                                const mx = ((e.clientX - rect.left) / rect.width) * lvlCanvas.width;
+                                aioDragLvlHandle(mx, lvlCanvas);
+                            }
+                        });
+                        window.addEventListener("mouseup", () => { aioActiveLvlHandle = null; });
+                        window.addEventListener("pointerup", () => { aioActiveLvlHandle = null; });
+
+                        panel.header.addEventListener("click", () => {
+                            requestAnimationFrame(() => drawAioLevelsBar(lvlCanvas));
+                        });
+                    } else if (groupConf.hasCanvas === 'color_balance') {
+                        const cbCanvasWrapper = document.createElement("div");
+                        cbCanvasWrapper.style.cssText = "display: flex; justify-content: center; margin-bottom: 6px; position: relative; width: 100%; box-sizing: border-box; max-width: 100%; padding: 0 2px;";
+                        const cbCanvas = document.createElement("canvas");
+                        cbCanvas.width = 300; cbCanvas.height = 110;
+                        cbCanvas.style.cssText = "background: #111; border-radius: 6px; border: 1px solid var(--trix-border); cursor: crosshair; display: block; max-width: 100%; height: auto; box-sizing: border-box;";
+                        cbCanvasWrapper.appendChild(cbCanvas);
+                        panel.body.appendChild(cbCanvasWrapper);
+
+                        drawCbWheelsRefs.push(() => drawAioCbWheels(cbCanvas));
+
+                        let cbDragging = false;
+                        const cbDown = (e) => { e.preventDefault(); e.stopPropagation(); cbDragging = true; aioCbOnDown(e, cbCanvas); };
+                        const cbMove = (e) => { if (cbDragging) { e.preventDefault(); e.stopPropagation(); aioCbPickFromCanvas(e, cbCanvas); } };
+                        const cbUp = () => { cbDragging = false; aioCbDraggingIdx = -1; };
+                        cbCanvas.addEventListener("mousedown", cbDown);
+                        cbCanvas.addEventListener("pointerdown", cbDown);
+                        window.addEventListener("mousemove", cbMove);
+                        window.addEventListener("pointermove", cbMove);
+                        window.addEventListener("mouseup", cbUp);
+                        window.addEventListener("pointerup", cbUp);
+
+                        panel.header.addEventListener("click", () => {
+                            requestAnimationFrame(() => drawAioCbWheels(cbCanvas));
+                        });
+                    } else if (groupConf.hasCanvas === 'halftone') {
+                        const htCanvasWrapper = document.createElement("div");
+                        htCanvasWrapper.style.cssText = "display: flex; justify-content: center; margin-bottom: 6px; margin-top: 4px; position: relative; width: 100%; box-sizing: border-box; max-width: 100%; padding: 0 2px;";
+                        const htAngleCanvas = document.createElement("canvas");
+                        htAngleCanvas.width = 300; htAngleCanvas.height = 86;
+                        htAngleCanvas.style.cssText = "display: block; margin: 4px auto; background: transparent; cursor: pointer; max-width: 100%; height: auto; box-sizing: border-box;";
+                        htCanvasWrapper.appendChild(htAngleCanvas);
+                        panel.body.appendChild(htCanvasWrapper);
+
+                        drawHtDialRefs.push(() => drawAioHtDial(htAngleCanvas));
+
+                        let htDialDragging = false;
+                        const htDown = (e) => { e.preventDefault(); e.stopPropagation(); htDialDragging = true; aioHtPickAngle(e, htAngleCanvas); };
+                        const htMove = (e) => { if (htDialDragging) { e.preventDefault(); e.stopPropagation(); aioHtPickAngle(e, htAngleCanvas); } };
+                        const htUp = () => { htDialDragging = false; };
+                        htAngleCanvas.addEventListener("mousedown", htDown);
+                        htAngleCanvas.addEventListener("pointerdown", htDown);
+                        window.addEventListener("mousemove", htMove);
+                        window.addEventListener("pointermove", htMove);
+                        window.addEventListener("mouseup", htUp);
+                        window.addEventListener("pointerup", htUp);
+
+                        panel.header.addEventListener("click", () => {
+                            requestAnimationFrame(() => drawAioHtDial(htAngleCanvas));
+                        });
+                    }
+
+                    groupConf.items.forEach(conf => {
+                        if (groupConf.hasCanvas === 'color_balance') {
+                            return;
+                        }
+                        if (groupConf.hasCanvas === 'levels' && conf.id !== 'cr_lvl_channel') {
+                            return;
+                        }
+                        if (groupConf.hasCanvas === 'color_filter' && conf.id !== 'cr_cf_preserve') {
+                            return;
+                        }
                         const wgt = getW(conf.id);
                         const row = document.createElement("div");
                         row.style.cssText = "display: flex; flex-direction: row; align-items: center; justify-content: space-between; padding: 2px 4px; margin-bottom: 2px; border-radius: 4px; flex-shrink: 0; min-height: 20px; transition: 0.1s;";
@@ -4404,31 +6428,24 @@ Control Tabs on the Node:
 
                         const title = document.createElement("span");
                         title.innerText = conf.label;
-                        title.style.cssText = "color: var(--trix-icon); font-family: var(--comfy-font-family, sans-serif); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 0 0 75px; cursor: pointer;";
+                        title.style.cssText = "color: var(--trix-icon); font-family: var(--comfy-font-family, sans-serif); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 0 0 85px; cursor: pointer;";
                         row.appendChild(title);
 
                         if (conf.type === 'combo') {
                             const selectEl = document.createElement("select");
-                            selectEl.style.cssText = "flex: 1; margin: 0 6px; background: #222; color: var(--trix-text); border: 1px solid var(--trix-border); border-radius: 3px; font-size: 10px; font-family: var(--comfy-font-family, sans-serif); outline: none; padding: 1px 2px; cursor: pointer; height: 18px;";
+                            selectEl.style.cssText = "background: #111; color: var(--trix-text); border: 1px solid var(--trix-border); border-radius: 4px; font-size: 10px; padding: 1px 3px; max-width: 140px; outline: none; cursor: pointer; flex: 1;";
                             conf.options.forEach(opt => {
-                                const optEl = document.createElement("option");
-                                optEl.value = opt;
-                                optEl.innerText = opt;
-                                selectEl.appendChild(optEl);
+                                const o = document.createElement("option");
+                                o.value = opt; o.innerText = opt;
+                                selectEl.appendChild(o);
                             });
-                            
-                            let startVal = (wgt && wgt.value !== undefined && wgt.value !== null) ? wgt.value : conf.default;
-                            if (typeof startVal === "number") {
-                                if (startVal >= 0 && startVal < conf.options.length) {
-                                    startVal = conf.options[startVal];
-                                } else {
-                                    startVal = conf.default;
-                                }
-                            }
+
+                            let startVal = (wgt && wgt.value !== undefined) ? wgt.value : (conf.default !== undefined ? conf.default : conf.options[0]);
                             selectEl.value = startVal;
 
                             selectEl.addEventListener("change", (e) => {
                                 if (wgt) wgt.value = e.target.value;
+                                updateGroupActiveColors();
                                 if(app.graph) app.graph.setDirtyCanvas(true, true);
                             });
                             selectEl.addEventListener("mousedown", (e) => e.stopPropagation());
@@ -4439,23 +6456,37 @@ Control Tabs on the Node:
                                     let val = wgt.value;
                                     if (typeof val === "number") {
                                         if (val >= 0 && val < conf.options.length) {
-                                            val = conf.options[val];
-                                        } else {
-                                            val = conf.default;
+                                            selectEl.value = conf.options[val];
                                         }
+                                    } else {
+                                        selectEl.value = val;
                                     }
-                                    selectEl.value = val;
                                 }
                             });
-
                             row.appendChild(selectEl);
-                            
-                            const spacer = document.createElement("div");
-                            spacer.style.cssText = "width: 34px; flex-shrink: 0;";
-                            row.appendChild(spacer);
+                        } else if (conf.type === 'checkbox') {
+                            const checkboxEl = document.createElement("input");
+                            checkboxEl.type = "checkbox";
+                            checkboxEl.checked = (wgt && wgt.value !== undefined) ? !!wgt.value : (conf.default !== undefined ? conf.default : false);
+                            checkboxEl.style.cssText = "cursor: pointer; width: 12px; height: 12px; accent-color: var(--trix-accent); margin: 0;";
+
+                            checkboxEl.addEventListener("change", (e) => {
+                                if (wgt) wgt.value = e.target.checked;
+                                updateGroupActiveColors();
+                                if(app.graph) app.graph.setDirtyCanvas(true, true);
+                            });
+                            checkboxEl.addEventListener("mousedown", (e) => e.stopPropagation());
+                            checkboxEl.addEventListener("pointerdown", (e) => e.stopPropagation());
+
+                            node._syncHTMLWithWidgets.push(() => {
+                                if (wgt && wgt.value !== undefined && wgt.value !== null) {
+                                    checkboxEl.checked = !!wgt.value;
+                                }
+                            });
+                            row.appendChild(checkboxEl);
                         } else {
                             let isFloat = typeof conf.step !== "undefined" && conf.step < 1.0;
-                            let startVal = (wgt && wgt.value !== undefined && wgt.value !== null) ? (isFloat ? parseFloat(wgt.value) : parseInt(wgt.value)) : 0;
+                            let startVal = (wgt && wgt.value !== undefined && wgt.value !== null) ? (isFloat ? parseFloat(wgt.value) : parseInt(wgt.value)) : (conf.default !== undefined ? conf.default : 0);
                             if(isNaN(startVal)) startVal = 0;
                             
                             const sliderEl = document.createElement("input");
@@ -4464,10 +6495,8 @@ Control Tabs on the Node:
                             if (typeof conf.step !== "undefined") sliderEl.step = conf.step;
                             
                             const inputEl = document.createElement("input");
-                            inputEl.type = "number"; inputEl.min = conf.min; inputEl.max = conf.max; inputEl.value = startVal;
-                            inputEl.className = "trix-num";
-                            inputEl.style.cssText = "background: #000; color: var(--trix-text); border: 1px solid var(--trix-border); padding: 1px 2px; border-radius: 3px; font-size: 10px; font-family: var(--comfy-font-family, monospace); outline: none; width: 48px; box-sizing: border-box; cursor: pointer; text-align: center; flex-shrink: 0;";
-                            if (typeof conf.step !== "undefined") inputEl.step = conf.step;
+                            inputEl.type = "text"; inputEl.value = isFloat ? startVal.toFixed(3).replace(/\.?0+$/, "") : startVal;
+                            inputEl.style.cssText = "width: 35px; background: #111; color: var(--trix-text); border: 1px solid var(--trix-border); border-radius: 3px; font-size: 9.5px; text-align: center; padding: 1px 0; outline: none;";
                             
                             sliderEl.addEventListener("mousedown", (e) => e.stopPropagation());
                             sliderEl.addEventListener("pointerdown", (e) => e.stopPropagation());
@@ -4485,12 +6514,24 @@ Control Tabs on the Node:
                                 }
                                 sliderEl.value = parsed;
                                 if (wgt) wgt.value = parsed;
+                                
+                                if (groupConf.hasCanvas === 'levels') {
+                                    drawLevelsBarRefs.forEach(ref => ref());
+                                } else if (groupConf.hasCanvas === 'color_balance') {
+                                    drawCbWheelsRefs.forEach(ref => ref());
+                                } else if (groupConf.hasCanvas === 'color_filter') {
+                                    drawCfWheelRefs.forEach(ref => ref());
+                                } else if (groupConf.hasCanvas === 'halftone') {
+                                    drawHtDialRefs.forEach(ref => ref());
+                                }
+
+                                updateGroupActiveColors();
                                 if(app.graph) app.graph.setDirtyCanvas(true, true);
                             };
 
                             inputEl.onchange = (e) => updateVals(e.target.value);
                             sliderEl.oninput = (e) => updateVals(e.target.value);
-
+                            
                             const doReset = () => updateVals(conf.default !== undefined ? conf.default : 0);
                             sliderEl.ondblclick = doReset;
                             title.ondblclick = doReset;
@@ -4506,8 +6547,18 @@ Control Tabs on the Node:
                             });
                             row.append(sliderEl, inputEl);
                         }
-                        cameraRawPanel.appendChild(row);
+                        panel.body.appendChild(row);
                     });
+                });
+
+
+
+                node._syncHTMLWithWidgets.push(() => {
+                    updateGroupActiveColors();
+                    drawCfWheelRefs.forEach(ref => ref());
+                    drawLevelsBarRefs.forEach(ref => ref());
+                    drawCbWheelsRefs.forEach(ref => ref());
+                    drawHtDialRefs.forEach(ref => ref());
                 });
 
                 const bodyContainer = document.createElement("div");
@@ -5268,24 +7319,10 @@ Control Tabs on the Node:
                         }
                     }
 
-                    const wHslActive = getW("hsl_active");
-                    const isHslOn = wHslActive ? wHslActive.value : false;
-                    const wCurveActive = getW("curve_active");
-                    const isCurveOn = wCurveActive ? wCurveActive.value : false;
-                    if (hslStatusBtn) {
-                        hslStatusBtn.innerText = isHslOn ? "Hue/Saturation: Active" : "Hue/Saturation: Inactive";
-                        hslStatusBtn.style.background = isHslOn ? "var(--trix-active)" : "transparent";
-                        hslStatusBtn.style.color = isHslOn ? "var(--trix-text)" : "var(--trix-icon)";
-                        hslStatusBtn.style.borderColor = isHslOn ? "var(--trix-active)" : "var(--trix-border)";
-                    }
-                    if (curveStatusBtn) {
-                        curveStatusBtn.innerText = isCurveOn ? "Curves: Active" : "Curves: Inactive";
-                        curveStatusBtn.style.background = isCurveOn ? "var(--trix-active)" : "transparent";
-                        curveStatusBtn.style.color = isCurveOn ? "var(--trix-text)" : "var(--trix-icon)";
-                        curveStatusBtn.style.borderColor = isCurveOn ? "var(--trix-active)" : "var(--trix-border)";
-                    }
+
                     
                     if (node.updateDynamicVisibilityRef) node.updateDynamicVisibilityRef();
+                    updateGroupActiveColors();
                     if (app.graph) app.graph.setDirtyCanvas(true, true);
                 };
                 node.updateUIRef = updateUI; 

@@ -1,6 +1,6 @@
 [project]
 name = "trixloader"
-version = "2.6.0"
+version = "2.6.1"
 description = "Lightroom-style Camera Raw, Advanced AI Mask Editor (SAM 2.1/3, GroundingDINO, RMBG), and Crop-Pad-Outpaint (CPO) Editor for ComfyUI."
 readme = "README.md"
 license = { text = "MIT" }

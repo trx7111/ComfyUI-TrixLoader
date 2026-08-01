@@ -2288,6 +2288,35 @@ def download_model_thread(url, dest_path, model_name, dest_dir):
             if model_name in _ACTIVE_DOWNLOADS:
                 del _ACTIVE_DOWNLOADS[model_name]
 
+@PromptServer.instance.routes.get('/trix/list_input_images')
+async def api_list_input_images(request):
+    try:
+        import folder_paths
+        input_dir = folder_paths.get_input_directory()
+        files_info = []
+        valid_exts = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tiff"}
+
+        if os.path.exists(input_dir):
+            for root, dirs, files in os.walk(input_dir):
+                for file in files:
+                    ext = os.path.splitext(file)[1].lower()
+                    if ext in valid_exts:
+                        full_path = os.path.join(root, file)
+                        rel_path = os.path.relpath(full_path, input_dir).replace("\\", "/")
+                        try:
+                            mtime = os.path.getmtime(full_path)
+                        except Exception:
+                            mtime = 0.0
+                        files_info.append({
+                            "filename": rel_path,
+                            "mtime": mtime
+                        })
+
+        return web.json_response({"files": files_info})
+    except Exception as e:
+        print(f"TrixLoader error listing input images: {e}")
+        return web.json_response({"files": [], "error": str(e)}, status=500)
+
 @PromptServer.instance.routes.get('/trix/get_presets')
 async def api_get_presets(request):
     try:

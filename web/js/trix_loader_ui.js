@@ -2877,6 +2877,73 @@ Control Tabs on the Node:
                         background: #121215;
                         border-top: 1px solid #2a2a32;
                         text-align: center;
+                    .trix-li-pop-refresh {
+                        flex: none;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        width: 24px;
+                        height: 24px;
+                        border: 1px solid #383842;
+                        border-radius: 4px;
+                        cursor: pointer;
+                        color: #aaa;
+                        margin-right: 6px;
+                        user-select: none;
+                        background: #18181c;
+                        transition: background 0.15s, color 0.15s;
+                    }
+                    .trix-li-pop-refresh:hover { color: #fff; border-color: #555; background: #2a2a34; }
+                    .trix-li-pop-refresh.spinning svg {
+                        animation: trix-spin 0.6s linear infinite;
+                    }
+                    @keyframes trix-spin {
+                        from { transform: rotate(0deg); }
+                        to { transform: rotate(360deg); }
+                    }
+                    .trix-li-pop-foot {
+                        padding: 5px 10px;
+                        font-size: 10px;
+                        color: #888;
+                        background: #121215;
+                        border-top: 1px solid #2a2a32;
+                        display: flex;
+                        justify-content: space-between;
+                        align-items: center;
+                    }
+                    .trix-li-pop-foot-info {
+                        overflow: hidden;
+                        text-overflow: ellipsis;
+                        white-space: nowrap;
+                    }
+                    .trix-li-pop-sort {
+                        display: flex;
+                        gap: 4px;
+                        align-items: center;
+                        flex: none;
+                    }
+                    .trix-li-pop-sort-btn {
+                        padding: 2px 6px;
+                        font-size: 9.5px;
+                        border-radius: 3px;
+                        border: 1px solid #33333c;
+                        color: #999;
+                        cursor: pointer;
+                        user-select: none;
+                        display: flex;
+                        align-items: center;
+                        gap: 3px;
+                        line-height: 1.3;
+                        background: #18181c;
+                        transition: background 0.15s, color 0.15s;
+                    }
+                    .trix-li-pop-sort-btn:hover { color: #eee; border-color: #555; background: #22222a; }
+                    .trix-li-pop-sort-btn.on {
+                        background: rgba(35, 90, 122, 0.4);
+                        color: #4db8ff;
+                        border-color: #235a7a;
+                        font-weight: 600;
+                    }
                     }
                     `;
                     const style = document.createElement("style");
@@ -2893,14 +2960,30 @@ Control Tabs on the Node:
                     return { subfolder, filename };
                 };
 
-                const trixGroupValuesByFolder = (values) => {
+                const trixGroupValuesByFolder = (values, sortMode = "date_desc", fileMtimes = new Map()) => {
                     const map = new Map();
                     for (const v of values) {
                         const { subfolder, filename } = trixSplitFilenameSubfolder(v);
                         if (!map.has(subfolder)) map.set(subfolder, []);
                         map.get(subfolder).push({ full: v, name: filename });
                     }
-                    for (const list of map.values()) list.sort((a, b) => a.name.localeCompare(b.name));
+                    for (const list of map.values()) {
+                        list.sort((a, b) => {
+                            if (sortMode === "name_asc") {
+                                return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+                            } else if (sortMode === "name_desc") {
+                                return b.name.localeCompare(a.name, undefined, { numeric: true, sensitivity: 'base' });
+                            } else if (sortMode === "date_asc") {
+                                const ta = fileMtimes.get(a.full) || 0;
+                                const tb = fileMtimes.get(b.full) || 0;
+                                return ta - tb || a.name.localeCompare(b.name);
+                            } else { // date_desc (default)
+                                const ta = fileMtimes.get(a.full) || 0;
+                                const tb = fileMtimes.get(b.full) || 0;
+                                return tb - ta || a.name.localeCompare(b.name);
+                            }
+                        });
+                    }
                     const folders = [...map.keys()].sort((a, b) => {
                         if (a === "" && b !== "") return -1;
                         if (a !== "" && b === "") return 1;
@@ -2927,10 +3010,54 @@ Control Tabs on the Node:
                     } catch (_e) { /* ignore */ }
                 };
 
-                const openTrixImageDropdown = (node, anchorEl, onPick) => {
+                const getTrixSortMode = () => {
+                    try {
+                        const v = localStorage.getItem("TrixLoader.ImagePicker.SortMode");
+                        return v || "date_desc";
+                    } catch (_e) { return "date_desc"; }
+                };
+
+                const setTrixSortMode = (v) => {
+                    try {
+                        localStorage.setItem("TrixLoader.ImagePicker.SortMode", v);
+                    } catch (_e) { /* ignore */ }
+                };
+
+                const openTrixImageDropdown = async (node, anchorEl, onPick) => {
                     injectTrixImagePickerCSS();
                     const imageWidget = widgets.image;
-                    const values = imageChoices();
+                    let values = imageChoices();
+                    let fileMtimes = new Map();
+                    let sortMode = getTrixSortMode();
+
+                    const fetchInputFiles = async () => {
+                        try {
+                            const resp = await fetch("/trix/list_input_images");
+                            if (resp.ok) {
+                                const data = await resp.json();
+                                if (data.files && Array.isArray(data.files)) {
+                                    fileMtimes.clear();
+                                    const newValues = [];
+                                    for (const item of data.files) {
+                                        newValues.push(item.filename);
+                                        if (item.mtime) fileMtimes.set(item.filename, item.mtime);
+                                    }
+                                    if (imageWidget && newValues.length > 0) {
+                                        imageWidget.options.values = newValues;
+                                    }
+                                    return newValues;
+                                }
+                            }
+                        } catch (err) {
+                            console.warn("TrixLoader: Error fetching input images:", err);
+                        }
+                        return null;
+                    };
+
+                    const initialServerValues = await fetchInputFiles();
+                    if (initialServerValues && initialServerValues.length > 0) {
+                        values = initialServerValues;
+                    }
 
                     const existing = document.querySelector(".trix-li-popup");
                     if (existing) {
@@ -2977,7 +3104,7 @@ Control Tabs on the Node:
                         return;
                     }
 
-                    const groups = trixGroupValuesByFolder(values);
+                    let groups = trixGroupValuesByFolder(values, sortMode, fileMtimes);
                     const curVal = imageWidget ? imageWidget.value : "";
                     const hasSubfolders = groups.some((g) => g.folder !== "");
 
@@ -2993,12 +3120,18 @@ Control Tabs on the Node:
                     const input = document.createElement("input");
                     input.type = "text";
                     input.placeholder = "Filter images…";
+
+                    const refreshBtn = document.createElement("div");
+                    refreshBtn.className = "trix-li-pop-refresh";
+                    refreshBtn.title = "Rescan input folder";
+                    refreshBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M2.5 22v-6h6"/><path d="M2 11.5a10 10 0 0 1 18.8-4.3L21.5 8M22 12.5a10 10 0 0 1-18.8 4.2L2.5 16"/></svg>`;
+
                     const sizeToggle = document.createElement("div");
                     sizeToggle.className = "trix-li-pop-sizetoggle";
                     const segS = document.createElement("span"); segS.textContent = "S"; segS.title = "Small thumbnails";
                     const segL = document.createElement("span"); segL.textContent = "L"; segL.title = "Large thumbnails";
                     sizeToggle.append(segS, segL);
-                    searchRow.append(mag, input, sizeToggle);
+                    searchRow.append(mag, input, refreshBtn, sizeToggle);
                     popup.appendChild(searchRow);
 
                     const body = document.createElement("div");
@@ -3013,7 +3146,70 @@ Control Tabs on the Node:
 
                     const footer = document.createElement("div");
                     footer.className = "trix-li-pop-foot";
+
+                    const footInfo = document.createElement("span");
+                    footInfo.className = "trix-li-pop-foot-info";
+
+                    const sortContainer = document.createElement("div");
+                    sortContainer.className = "trix-li-pop-sort";
+
+                    const sortNameBtn = document.createElement("div");
+                    sortNameBtn.className = "trix-li-pop-sort-btn";
+                    sortNameBtn.title = "Sort by Name";
+
+                    const sortDateBtn = document.createElement("div");
+                    sortDateBtn.className = "trix-li-pop-sort-btn";
+                    sortDateBtn.title = "Sort by Modification Date";
+
+                    const updateSortUI = () => {
+                        sortNameBtn.classList.toggle("on", sortMode.startsWith("name"));
+                        sortDateBtn.classList.toggle("on", sortMode.startsWith("date"));
+
+                        sortNameBtn.textContent = sortMode === "name_desc" ? "Name Z-A" : "Name A-Z";
+                        sortDateBtn.textContent = sortMode === "date_asc" ? "Date Oldest" : "Date Newest";
+                    };
+
+                    sortNameBtn.addEventListener("click", (e) => {
+                        e.stopPropagation();
+                        if (sortMode === "name_asc") sortMode = "name_desc";
+                        else sortMode = "name_asc";
+                        setTrixSortMode(sortMode);
+                        updateSortUI();
+                        groups = trixGroupValuesByFolder(values, sortMode, fileMtimes);
+                        renderSidebar();
+                        renderPane();
+                    });
+
+                    sortDateBtn.addEventListener("click", (e) => {
+                        e.stopPropagation();
+                        if (sortMode === "date_desc") sortMode = "date_asc";
+                        else sortMode = "date_desc";
+                        setTrixSortMode(sortMode);
+                        updateSortUI();
+                        groups = trixGroupValuesByFolder(values, sortMode, fileMtimes);
+                        renderSidebar();
+                        renderPane();
+                    });
+
+                    sortContainer.append(sortNameBtn, sortDateBtn);
+                    footer.append(footInfo, sortContainer);
                     popup.appendChild(footer);
+                    updateSortUI();
+
+                    refreshBtn.addEventListener("click", async (e) => {
+                        e.stopPropagation();
+                        refreshBtn.classList.add("spinning");
+                        const updatedValues = await fetchInputFiles();
+                        if (updatedValues && updatedValues.length > 0) {
+                            values = updatedValues;
+                        } else {
+                            values = imageChoices();
+                        }
+                        groups = trixGroupValuesByFolder(values, sortMode, fileMtimes);
+                        renderSidebar();
+                        renderPane();
+                        setTimeout(() => refreshBtn.classList.remove("spinning"), 450);
+                    });
 
                     const makeRow = (entry) => {
                         const row = document.createElement("div");
@@ -3108,13 +3304,13 @@ Control Tabs on the Node:
                                 none.textContent = "(no matches)";
                                 pane.appendChild(none);
                             }
-                            footer.textContent = `${matches} match${matches === 1 ? "" : "es"}`;
+                            footInfo.textContent = `${matches} match${matches === 1 ? "" : "es"}`;
                             return;
                         }
 
                         if (!hasSubfolders) {
                             for (const g of groups) for (const entry of g.files) pane.appendChild(makeRow(entry));
-                            footer.textContent = `${values.length} image${values.length === 1 ? "" : "s"}`;
+                            footInfo.textContent = `${values.length} image${values.length === 1 ? "" : "s"}`;
                             scrollCurrentIntoView();
                             return;
                         }
@@ -3124,12 +3320,12 @@ Control Tabs on the Node:
                                 pane.appendChild(makeSec(folderLabel(g.folder), g.files.length));
                                 for (const entry of g.files) pane.appendChild(makeRow(entry));
                             }
-                            footer.textContent = `${values.length} image${values.length === 1 ? "" : "s"} · all`;
+                            footInfo.textContent = `${values.length} image${values.length === 1 ? "" : "s"} · all`;
                         } else {
                             const g = groups.find((x) => x.folder === activeFolder);
                             const files = g ? g.files : [];
                             for (const entry of files) pane.appendChild(makeRow(entry));
-                            footer.textContent = `${files.length} image${files.length === 1 ? "" : "s"} · ${folderLabel(activeFolder)}`;
+                            footInfo.textContent = `${files.length} image${files.length === 1 ? "" : "s"} · ${folderLabel(activeFolder)}`;
                         }
                         scrollCurrentIntoView();
                     };
